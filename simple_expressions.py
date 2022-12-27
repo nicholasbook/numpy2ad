@@ -35,7 +35,7 @@ def simple_exp_adjoint(A, B, C, A_a, B_a, C_a):
     v3_a = 0
 
     # initialize adjoint direction ("y_a")
-    v4_a = 1
+    v4_a = 1  # np.ones ?
 
     # reverse mode §2 AR
     v3_a += v4_a
