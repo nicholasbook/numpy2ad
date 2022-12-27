@@ -23,13 +23,14 @@ def simple_exp_adjoint(A, B, C, A_a, B_a, C_a):
     v0 = A
     v1 = B
     v2 = C
+
     v3 = v0 @ v1
     v4 = v3 + v2
 
     # initialize argument adjoints §1 AR
-    v0_a = A_a
-    v1_a = B_a
     v2_a = C_a
+    v1_a = B_a
+    v0_a = A_a
 
     # initialize intermediate adjoints
     v3_a = 0
@@ -37,7 +38,7 @@ def simple_exp_adjoint(A, B, C, A_a, B_a, C_a):
     # initialize adjoint direction ("y_a")
     v4_a = 1  # np.ones ?
 
-    # reverse mode §2 AR
+    # reverse mode (no values restored) §2 AR
     v3_a += v4_a
     v2_a += v4_a
     v4_a = 0  # §3 AR

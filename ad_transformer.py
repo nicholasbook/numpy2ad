@@ -1,5 +1,13 @@
 import ast
-from copy import deepcopy
+from copy import deepcopy, copy
+import re
+
+# from derivatives import *
+
+import derivatives
+import importlib
+
+importlib.reload(derivatives)
 from derivatives import *
 
 
@@ -15,6 +23,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
     counter = 0  # global SAC counter
 
     reverse_stack = None
+    reverse_init_list = None
     var_table = None  # dictionary for transformed variable names i.e. {"A" : "v0"}
     return_list = None  # list of values to return
 
@@ -27,6 +36,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             self.reverse_stack = list()
         if self.return_list is None:
             self.return_list = list()
+        if self.reverse_init_list is None:
+            self.reverse_init_list = list()
 
     def SAC(self, rhs) -> ast.Name:
         """
@@ -37,19 +48,28 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         if hasattr(rhs, "id"):
             self.var_table[rhs.id] = new_v.id
         self.primal_stack.insert(self.counter, new_node)
+
         self.counter += 1
         return new_v
 
-    def ad_SAC(self, rhs, target_v: int) -> ast.Name:
+    def ad_SAC(self, rhs, target_v: int, init_mode: bool) -> ast.Name:
         """
         Generates and inserts reverse (adjoint) single assignment code for given right hand side.
         """
-        # TODO: flag for incremental?
         new_v = ast.Name(id="v{}_a".format(target_v), ctx=ast.Store())
-        new_node = ast.Assign(targets=[new_v], value=rhs)
-        self.reverse_stack.insert(
-            0, new_node
-        )  # always insert at index 0 to ensure reverse order (consider appending for O(1) complexity)
+        new_node = (
+            ast.Assign(targets=[new_v], value=rhs)
+            if init_mode
+            else ast.AugAssign(op=ast.Add(), target=new_v, value=rhs)
+        )
+
+        if init_mode:
+            self.reverse_init_list.append(new_node)
+        else:
+            self.reverse_stack.insert(
+                0, new_node
+            )  # always insert at index 0 to ensure reverse order (consider appending for O(1) complexity)
+
         return new_v
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
@@ -74,8 +94,23 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         new_node = ast.Assign(
             targets=[new_v],
             value=ast.BinOp(left=left_v, op=binop_node.op, right=right_v),
-        )
+        )  # e.g. v3 = v0 @ v1
         self.primal_stack.insert(self.counter, new_node)  # insert SAC
+
+        # initialize adjoint of new v_i
+        value = ast.Constant(value=0)
+        new_v_a = self.ad_SAC(value, self.counter, True)
+
+        # generate derivative of BinOp: left_a/right_a += f' lhs_a
+        new_v_a_c = copy(new_v_a)
+        new_v_a_c.ctx = ast.Load()
+        deriv = derivative_BinOp(new_node.value, WithRespectTo.Left)  # ast.Expr
+        prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
+        self.ad_SAC(prod, self.get_id(left_v), False)
+        deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
+        prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
+        self.ad_SAC(prod, self.get_id(right_v), False)
+
         self.counter += 1
 
         # TODO: adjoints for left and right node
@@ -103,6 +138,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         self.functionDef.body = self.primal_stack
 
         # append finished reverse section
+        self.functionDef.body.extend(self.reverse_init_list)
         self.functionDef.body.extend(self.reverse_stack)
 
         return self.functionDef  # return modified FunctionDef
@@ -112,15 +148,19 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         old_arguments = arguments.args.copy()
         for a in old_arguments:
             # SAC for arguments
-            old_v = ast.Name(id=a.arg, ctx=ast.Load())
-            self.SAC(old_v)
+            old_var = ast.Name(id=a.arg, ctx=ast.Load())
+            self.SAC(old_var)
 
             # append adjoint arguments
             ad_arg = a.arg + "_a"
             arguments.args.append(ast.arg(arg=ad_arg))
-            old_v = ast.Name(id=ad_arg, ctx=ast.Load())
-            v_ad = self.ad_SAC(old_v, self.counter - 1)
-            self.return_list.append(v_ad)  # remember adjoints for return statement
+
+            new_v = ast.Name(id="v{}_a".format(self.counter - 1), ctx=ast.Store())
+            old_var_ad = ast.Name(id=ad_arg, ctx=ast.Load())
+            self.ad_SAC(old_var_ad, self.counter - 1, True)
+            # self.reverse_init_list.append(ast.Assign(targets=[new_v], value=old_var_ad))
+
+            self.return_list.append(new_v)  # remember adjoints for return statement
 
         return arguments
 
@@ -128,7 +168,9 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         """generates SAC for expression that is returned and replaces it with
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
-        # TODO: initialize adjoint of final v_i
+
+        # TODO: correctly initialize adjoint of final v_i
+        self.reverse_init_list[-1].value.value = 1
 
         self.return_list.insert(0, final_v)
 
@@ -155,6 +197,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             self.var_table[node.targets[0].id] = new_v.id
         else:  # just insert assignment for now
             new_v = self.SAC(node.value)
+            # value = ast.Constant(value=0)
+            # self.ad_SAC(value, self.counter)
 
         # TODO: initialize adjoint of new v_i
 
@@ -184,3 +228,6 @@ class AdjointNodeTransformer(ast.NodeTransformer):
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.Name:
         """generates SAC for unary operation and returns the newly assigned v_i"""
         return self.SAC(node)
+
+    def get_id(self, node: ast.Name):
+        return re.search(r".(\d*)", node.id).group(1)
