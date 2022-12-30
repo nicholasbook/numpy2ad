@@ -19,11 +19,11 @@ class AdjointNodeTransformer(ast.NodeTransformer):
     """
 
     functionDef = None  # ast.FunctionDef
-    primal_stack = None
+    primal_stack = None  # forward section
     counter = 0  # global SAC counter
 
-    reverse_stack = None
-    reverse_init_list = None
+    reverse_stack = None  # reverse section
+    reverse_init_list = None  # adjoint initialization section
     var_table = None  # dictionary for transformed variable names i.e. {"A" : "v0"}
     return_list = None  # list of values to return
 
@@ -112,8 +112,6 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         self.ad_SAC(prod, self.get_id(right_v), False)
 
         self.counter += 1
-
-        # TODO: adjoints for left and right node
         return new_v
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.Name:
@@ -122,7 +120,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         and a reverse ("adjoint") section of the given function
         """
         self.functionDef = deepcopy(node)  # copy FuncDef to modify it (efficiency?)
-        self.functionDef.name = node.name + "_AD"
+        self.functionDef.name = node.name + "_ad"
         print("Generating {} ...".format(str(self.functionDef.name)))
 
         # clear the function body
@@ -158,7 +156,6 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             new_v = ast.Name(id="v{}_a".format(self.counter - 1), ctx=ast.Store())
             old_var_ad = ast.Name(id=ad_arg, ctx=ast.Load())
             self.ad_SAC(old_var_ad, self.counter - 1, True)
-            # self.reverse_init_list.append(ast.Assign(targets=[new_v], value=old_var_ad))
 
             self.return_list.append(new_v)  # remember adjoints for return statement
 
@@ -169,9 +166,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
 
-        # TODO: correctly initialize adjoint of final v_i
         self.reverse_init_list[-1].value.value = 1
-
         self.return_list.insert(0, final_v)
 
         return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
@@ -196,11 +191,14 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         if new_v is not None:  # remember v_i
             self.var_table[node.targets[0].id] = new_v.id
         else:  # just insert assignment for now
+            raise ValueError("visit(rhs of Assign) returned None")
             new_v = self.SAC(node.value)
-            # value = ast.Constant(value=0)
-            # self.ad_SAC(value, self.counter)
 
-        # TODO: initialize adjoint of new v_i
+        # TODO: initialize adjoint of new v_i?
+        # c = a + b -> assign(binop) -> binop handles intialization (c_a required for ad_SAC anyway)
+        # c = a -> aliasing! who does a_a = c_a ?
+        # c = f(a) -> assign(call) -> call inits.
+        self.ad_SAC(ast.Constant(value=0.0), self.get_id(new_v), True)
 
         return None  # old assignment is removed
 
@@ -216,10 +214,22 @@ class AdjointNodeTransformer(ast.NodeTransformer):
                 node.args[i]
             )  # could simply be a Name or possibly nested BinOp
 
-            node.args[i] = arg_v  # we only need to change the argument
-        # TODO: derivative of function call
+            # ensure arg_v is loaded
+            if type(arg_v.ctx) is ast.Store:
+                arg_v_c = copy(arg_v)
+                arg_v_c.ctx = ast.Load()
+                node.args[i] = arg_v_c
+            else:
+                node.args[i] = arg_v  # replace the argument names
 
-        return self.SAC(node)
+            d = derivative_Call(node, i)
+            if d is not None:  # generate adjoints for arguments
+                self.ad_SAC(d, self.get_id(arg_v), True)
+
+        # initialize adjoint of lhs
+
+        new_v = self.SAC(node)
+        return new_v
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
         """returns the v_i corresponding to node (lookup)"""
@@ -227,7 +237,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.Name:
         """generates SAC for unary operation and returns the newly assigned v_i"""
+        # TODO: initialize adjoint
         return self.SAC(node)
 
     def get_id(self, node: ast.Name):
-        return re.search(r".(\d*)", node.id).group(1)
+        return re.search(r"v(\d+)", node.id).group(1)

@@ -5,9 +5,6 @@ def simple_exp(A, B, C):
     return A @ B + C
 
 
-# simple_exp should first be transformed to simple_exp_SAC """
-
-
 def simple_exp_SAC(A, B, C):
     v0 = A
     v1 = B
@@ -17,8 +14,7 @@ def simple_exp_SAC(A, B, C):
     return v4
 
 
-# simple_exp_SAC should then be transformed to simple_exp_ad
-def simple_exp_adjoint(A, B, C, A_a, B_a, C_a):
+def simple_exp_ad(A, B, C, A_a, B_a, C_a):
     # forward SAC (no overwriting)
     v0 = A
     v1 = B
@@ -93,3 +89,8 @@ def LLS(A, y):
 
 def quadratic(A, x, b):
     return 0.5 * numpy.transpose(x) @ A @ x - numpy.tranpose(x) @ b
+
+
+def sigmoid(A: numpy.ndarray):
+    denominator = numpy.ones(A.shape) + numpy.exp(-A)
+    return numpy.divide(numpy.ones(A.shape), denominator)

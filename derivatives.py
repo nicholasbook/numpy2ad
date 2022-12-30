@@ -1,6 +1,6 @@
-import numpy as np
 import ast
 from enum import Enum
+from copy import copy
 
 # TODO: @/np.dot/np.matmul, np.linalg.inv, +/np.add, -, * (element-wise), **
 
@@ -22,6 +22,7 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
     """
     Returns an expression that contains the partial derivative
     of the given binary operation with respect to the specified argument (Left or Right).
+    Only for scalar variables (and operators that are overloaded for ndarrays)
     """
     match type(node.op):
         case ast.Add:  # c = l + r
@@ -56,3 +57,32 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
             )
         case _:
             raise TypeError("Not implemented yet")
+
+
+def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
+    func = call.func.attr  # e.g. "exp"
+
+    match func:
+        case "exp":
+            return call
+        case "divide":  # a / b
+            if wrt_arg == 0:  # 1 / b
+                recip = copy(call.func)
+                recip.attr = "reciprocal"  # does not work for integers!
+
+                return ast.Call(func=recip, args=[call.args[1]], keywords=[])
+
+            else:  # - a / b ** 2
+                minus_a = ast.UnaryOp(op=ast.USub(), operand=call.args[0])
+                b_squared = copy(call.func)
+                b_squared.attr = "square"
+                divide = copy(call.func)
+                divide.attr = "divide"
+
+                return ast.Call(func=divide, args=[minus_a, b_squared], keywords=[])
+        case "ones":
+            return None
+        case "zeros":
+            return None
+        case _:
+            raise ValueError("Not implemented yet")
