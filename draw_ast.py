@@ -11,10 +11,7 @@ def draw_AST(function):
         tree (_type_): _description_
     """
     vis = ast_traversal.RecordGraphVisitor()
-    tree = ast.parse(inspect.getsource(function))
+    code = inspect.getsource(function) if callable(function) else function
+    tree = ast.parse(code)
     vis.visit(tree)
     return vis.graph
-
-
-def export_AST(tree, filename):
-    dot = viz.Digraph(name="AST", filename=filename)

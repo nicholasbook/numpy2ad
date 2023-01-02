@@ -1,6 +1,8 @@
 import ast
 from copy import deepcopy, copy
 import re
+from inspect import getsource
+from typing import Callable
 
 # from derivatives import *
 
@@ -38,6 +40,23 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             self.return_list = list()
         if self.reverse_init_list is None:
             self.reverse_init_list = list()
+
+    def get_id(self, node: ast.Name) -> str:
+        return re.search(r"v(\d+)", node.id).group(1)
+
+    def generate_attribute(self, var: str, attr: str) -> ast.Attribute:
+        return ast.Attribute(
+            value=ast.Name(id=var, ctx=ast.Load()), attr=attr, ctx=ast.Load()
+        )
+
+    def generate_call(self, func: ast.Attribute, args: list[ast.Attribute]) -> ast.Call:
+        return ast.Call(func=func, args=args, keywords=[])
+
+    def numpy_zeros(self, var: str) -> str:
+        return self.generate_call(
+            func=self.generate_attribute(var="numpy", attr="zeros"),
+            args=[self.generate_attribute(var=var, attr="shape")],
+        )
 
     def SAC(self, rhs) -> ast.Name:
         """
@@ -98,7 +117,10 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         self.primal_stack.insert(self.counter, new_node)  # insert SAC
 
         # initialize adjoint of new v_i
-        value = ast.Constant(value=0)
+        value = self.generate_call(
+            func=self.generate_attribute(var="numpy", attr="zeros"),
+            args=[self.generate_attribute(var=new_v.id, attr="shape")],
+        )
         new_v_a = self.ad_SAC(value, self.counter, True)
 
         # generate derivative of BinOp: left_a/right_a += f' lhs_a
@@ -121,7 +143,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         """
         self.functionDef = deepcopy(node)  # copy FuncDef to modify it (efficiency?)
         self.functionDef.name = node.name + "_ad"
-        print("Generating {} ...".format(str(self.functionDef.name)))
+        # print("Generating {} ...".format(str(self.functionDef.name)))
 
         # clear the function body
         self.functionDef.body = []
@@ -159,6 +181,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
             self.return_list.append(new_v)  # remember adjoints for return statement
 
+            # TODO: add type hints
+
         return arguments
 
     def visit_Return(self, node: ast.Return) -> None:
@@ -166,7 +190,10 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
 
-        self.reverse_init_list[-1].value.value = 1
+        self.reverse_init_list[-1].value = self.generate_call(
+            func=self.generate_attribute(var="numpy", attr="ones"),
+            args=[self.generate_attribute(var=final_v.id, attr="shape")],
+        )
         self.return_list.insert(0, final_v)
 
         return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
@@ -192,19 +219,22 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             self.var_table[node.targets[0].id] = new_v.id
         else:  # just insert assignment for now
             raise ValueError("visit(rhs of Assign) returned None")
-            new_v = self.SAC(node.value)
+            # new_v = self.SAC(node.value)
 
         # TODO: initialize adjoint of new v_i?
         # c = a + b -> assign(binop) -> binop handles intialization (c_a required for ad_SAC anyway)
         # c = a -> aliasing! who does a_a = c_a ?
         # c = f(a) -> assign(call) -> call inits.
-        self.ad_SAC(ast.Constant(value=0.0), self.get_id(new_v), True)
+        # if rhs is Name (?)
+        # self.ad_SAC(ast.Constant(value=0.0), self.get_id(new_v), True)
 
         return None  # old assignment is removed
 
     def visit_Constant(self, node: ast.Constant) -> ast.Name:
         """generates SAC for constant assignment and returns the newly assigned v_i"""
-        return self.SAC(node)
+        new_v = self.SAC(node)
+        self.ad_SAC(ast.Constant(value=0.0), self.get_id(new_v), True)
+        return new_v
 
     def visit_Call(self, node: ast.Call) -> ast.Name:
         """replaces the arguments of a function call, generates SAC, and returns the newly assigned v_i"""
@@ -222,13 +252,22 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             else:
                 node.args[i] = arg_v  # replace the argument names
 
-            d = derivative_Call(node, i)
-            if d is not None:  # generate adjoints for arguments
-                self.ad_SAC(d, self.get_id(arg_v), True)
+        # SAC for lhs
+        new_v = self.SAC(node)
 
         # initialize adjoint of lhs
+        new_v_a = self.ad_SAC(self.numpy_zeros(new_v.id), self.get_id(new_v), True)
 
-        new_v = self.SAC(node)
+        # adjoints of args (already initialized)
+        for i in range(len(node.args)):
+            if type(node.args[i]) is ast.Name:
+                d = derivative_Call(node, i)
+                if d is not None:
+                    new_v_a_c = copy(new_v_a)
+                    new_v_a_c.ctx = ast.Load()
+                    prod = ast.BinOp(op=ast.Mult(), left=d, right=new_v_a_c)
+                    self.ad_SAC(prod, self.get_id(node.args[i]), False)
+
         return new_v
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
@@ -237,8 +276,47 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.Name:
         """generates SAC for unary operation and returns the newly assigned v_i"""
-        # TODO: initialize adjoint
-        return self.SAC(node)
+        op_v = self.visit(node.operand)  # Name, Constant, Call, ...
 
-    def get_id(self, node: ast.Name):
-        return re.search(r"v(\d+)", node.id).group(1)
+        # replace operand (variable must be known e.g. -A -> -v0)
+        op_v_c = copy(op_v)
+        op_v_c.ctx = ast.Load()
+        node.operand = op_v_c
+
+        # generate SAC
+        new_v = self.SAC(node)
+
+        # generate and initialize adjoint
+        # v0 = A, v1 = -A -> v1 = -v0 -> v0_a = A_a, v1_a = 0, v0_a += -v1_a
+        new_v_a = self.ad_SAC(self.numpy_zeros(new_v.id), self.get_id(new_v), True)
+        new_v_a_c = copy(new_v_a)
+        new_v_a_c.ctx = ast.Load()
+        prod = ast.BinOp(
+            op=ast.Mult(), left=derivative_UnOp(node).value, right=new_v_a_c
+        )
+        self.ad_SAC(prod, self.get_id(node.operand), False)
+
+        return new_v
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        new_node = self.generic_visit(node)
+        # insert "import numpy"
+        new_node.body.insert(0, ast.Import(names=[ast.alias(name="numpy")]))
+        return new_node
+
+
+def transform(func: Callable) -> str:
+    """
+    Transforms the source code of a given function to include
+    the computation of derivatives using reverse ("adjoint") mode automatic differentiation.
+    The transformed function is given as a string that can be compiled and executed.
+
+    The forward ("primal") section is tranformed to single-assignment code
+    and the adjoints of all input variables are returned togethere with the primal result.
+    """
+    transformer = AdjointNodeTransformer()
+    tree = ast.parse(getsource(func))
+    newAST = transformer.visit(tree)
+    newAST = ast.fix_missing_locations(newAST)
+    return ast.unparse(newAST)
+    # TODO: make transform(transform(...)) work

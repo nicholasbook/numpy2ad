@@ -4,6 +4,7 @@ import ast
 import graphviz as viz
 import inspect
 
+
 def print_classes(tree):
     """Prints all node classes found in tree"""
     for node in ast.walk(tree):
@@ -41,7 +42,7 @@ class VerboseRecursiveVisitor(ast.NodeVisitor):
     def __init__(self):
         self.n = 0
         self.cur_parent = None
-        self.indent_c = 0 # TODO
+        self.indent_c = 0  # TODO
 
     def recursive(func):
         """decorator to make visitor work recursive"""
@@ -51,7 +52,9 @@ class VerboseRecursiveVisitor(ast.NodeVisitor):
             func(self, node)  # visit node itself
             print(
                 'Node "{node}" (#{i} overall) found {N} children.'.format(
-                    node=type(node).__name__, i=self.n, N=sum(1 for _ in ast.iter_child_nodes(node))
+                    node=type(node).__name__,
+                    i=self.n,
+                    N=sum(1 for _ in ast.iter_child_nodes(node)),
                 )
             )
             if self.cur_parent is not None:
@@ -69,7 +72,7 @@ class VerboseRecursiveVisitor(ast.NodeVisitor):
             print(i)
 
     @recursive
-    def visit_Assign(self, node):        
+    def visit_Assign(self, node):
         print(type(node).__name__)
         self.print_attributes(node)
 
@@ -79,7 +82,7 @@ class VerboseRecursiveVisitor(ast.NodeVisitor):
         self.print_attributes(node)
 
     @recursive
-    def visit_Call(self, node):        
+    def visit_Call(self, node):
         print(type(node).__name__)
         self.print_attributes(node)
 
@@ -116,7 +119,7 @@ class RecordGraphVisitor(ast.NodeVisitor):
     """Recursive node visitor"""
 
     def __init__(self):
-        self.graph = viz.Digraph()
+        self.graph = viz.Digraph(graph_attr={"size": "9,5"})
         self.print_attr = ["name", "id", "arg", "op", "attr"]
         self.parse_attr = [
             "name",
@@ -128,14 +131,14 @@ class RecordGraphVisitor(ast.NodeVisitor):
             "left",
             "right",
             "op",
-            "attr"
+            "attr",
         ]
         # global counters for unique node ids (how can this be done S-Attributed?)
         # there can only be one Module
         self.FunctionDef_c = 0
         self.Name_c = 0
         self.Assign_c = 0
-        self.BinOp_c = 0        
+        self.BinOp_c = 0
         self.Call_c = 0
         self.Attr_c = 0
         self.Return_c = 0
@@ -147,17 +150,17 @@ class RecordGraphVisitor(ast.NodeVisitor):
 
         def wrapper(self, node):
             oldparent = self.cur_parent
-            func(self, node)  # visit node itself   
-                   
+            func(self, node)  # visit node itself
+
             for child in ast.iter_child_nodes(node):
-                self.visit(child)  # visit all children 
+                self.visit(child)  # visit all children
             self.cur_parent = oldparent
 
         return wrapper
 
     def add_node(self, ast_node, id):
         name = str(type(ast_node).__name__)
-        text =  name + "\n"
+        text = name + "\n"
         for attr in ast.iter_fields(ast_node):  # tuple
             if attr[0] in self.print_attr:
                 if isinstance(ast_node, ast.BinOp):  # pretty print
@@ -170,13 +173,13 @@ class RecordGraphVisitor(ast.NodeVisitor):
                     )
                 else:  # default print
                     text = text + str(attr[0]) + ":" + str(attr[1]) + "\n"
-        
-        unique_id = name + str(id or "")                    
+
+        unique_id = name + str(id or "")
         self.graph.node(unique_id, label=text)  # add node to graph
-        
-        if id is not None: # reserved for root Module
+
+        if id is not None:  # reserved for root Module
             self.graph.edge(self.cur_parent, unique_id)
-            self.cur_parent = unique_id # remember for child nodes (broken)
+            self.cur_parent = unique_id  # remember for child nodes (broken)
 
     # --- recursive node visitors (somewhat hierachical order) ---
     # visit functions can return a value which is forwarded!
@@ -214,7 +217,7 @@ class RecordGraphVisitor(ast.NodeVisitor):
     @recursive
     def visit_Attribute(self, node):
         self.add_node(node, self.Attr_c)
-        self.Attr_c += 1    
+        self.Attr_c += 1
 
     @recursive
     def visit_Return(self, node):
@@ -223,7 +226,6 @@ class RecordGraphVisitor(ast.NodeVisitor):
 
     def generic_visit(self, node):
         pass
-
 
 
 # --- convenience methods ---

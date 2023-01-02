@@ -1,6 +1,6 @@
 import ast
 from enum import Enum
-from copy import copy
+from copy import deepcopy
 
 # TODO: @/np.dot/np.matmul, np.linalg.inv, +/np.add, -, * (element-wise), **
 
@@ -18,6 +18,12 @@ class WithRespectTo(Enum):
     Right = 1
 
 
+def derivative_UnOp(node: ast.UnaryOp) -> ast.Expr:
+    match type(node.op):
+        case ast.USub:  # b = -a
+            return ast.Expr(value=ast.Constant(value=-1.0))
+
+
 def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
     """
     Returns an expression that contains the partial derivative
@@ -26,10 +32,10 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
     """
     match type(node.op):
         case ast.Add:  # c = l + r
-            return ast.Expr(value=ast.Constant(value=1))
+            return ast.Expr(value=ast.Constant(value=1.0))
         case ast.Sub:  # c = l - r
             return ast.Expr(
-                value=ast.Constant(value=(1 if wrt is WithRespectTo.Left else -1))
+                value=ast.Constant(value=(1.0 if wrt is WithRespectTo.Left else -1.0))
             )
         case ast.Mult:  # c = l * r
             return ast.Expr(
@@ -53,7 +59,7 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
             )
         case ast.MatMult:  # c = a @ b
             return ast.Expr(
-                value=(node.left if wrt is WithRespectTo.Left else node.right)
+                value=(node.right if wrt is WithRespectTo.Left else node.left)
             )
         case _:
             raise TypeError("Not implemented yet")
@@ -67,16 +73,17 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
             return call
         case "divide":  # a / b
             if wrt_arg == 0:  # 1 / b
-                recip = copy(call.func)
+                recip = deepcopy(call.func)
                 recip.attr = "reciprocal"  # does not work for integers!
 
                 return ast.Call(func=recip, args=[call.args[1]], keywords=[])
 
             else:  # - a / b ** 2
                 minus_a = ast.UnaryOp(op=ast.USub(), operand=call.args[0])
-                b_squared = copy(call.func)
-                b_squared.attr = "square"
-                divide = copy(call.func)
+                b_squared = deepcopy(call)
+                b_squared.func.attr = "square"
+                b_squared.args = [call.args[1]]
+                divide = deepcopy(call.func)
                 divide.attr = "divide"
 
                 return ast.Call(func=divide, args=[minus_a, b_squared], keywords=[])
@@ -86,3 +93,4 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
             return None
         case _:
             raise ValueError("Not implemented yet")
+    # TODO: replace deepcopy (slow) with some method to generate ast.Call

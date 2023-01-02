@@ -74,7 +74,7 @@ def multiline_BinOps(A, B, C):
     E = A - C  # v4 = v0 - v2
     F = D / E  # v5 = v3 / v4
     G = (A + E) * (B + F) * D  # v7=v0+v4; v8=v1+v5; v9=v7*v8
-    H = -1  # v10 = -1
+    H = -numpy.ones(G.shape)  # v10 = -1
     return (G - H) * (G + H)  # v11 = v9 - v10; v12=v9+v10; v13=v11*v12;
     # return v13
 
