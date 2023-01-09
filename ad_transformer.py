@@ -2,7 +2,7 @@ import ast
 from copy import deepcopy, copy
 import re
 from inspect import getsource
-from typing import Callable
+from typing import Callable, Union
 
 # from derivatives import *
 
@@ -58,13 +58,18 @@ class AdjointNodeTransformer(ast.NodeTransformer):
             args=[self.generate_attribute(var=var, attr="shape")],
         )
 
+    def make_ctx_load(self, node: ast.Name) -> ast.Name:
+        new_node = copy(node)
+        new_node.ctx = ast.Load()
+        return new_node
+
     def SAC(self, rhs) -> ast.Name:
         """
         Generates and inserts forward (primal) single assignment code for given right hand side.
         """
         new_v = ast.Name(id="v{}".format(self.counter), ctx=ast.Store())
         new_node = ast.Assign(targets=[new_v], value=rhs)
-        if hasattr(rhs, "id"):
+        if hasattr(rhs, "id"):  # not the case for ast.Constant
             self.var_table[rhs.id] = new_v.id
         self.primal_stack.insert(self.counter, new_node)
 
@@ -104,17 +109,18 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
     def BinOp_SAC(self, binop_node: ast.BinOp) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable."""
-        new_v = ast.Name(id="v" + str(self.counter), ctx=ast.Store())
-
         # left and right must have been assigned to some v_i already
         left_v = self.visit(binop_node.left)  # calls visit_Name
         right_v = self.visit(binop_node.right)
+
+        new_v = ast.Name(id="v" + str(self.counter), ctx=ast.Store())
 
         new_node = ast.Assign(
             targets=[new_v],
             value=ast.BinOp(left=left_v, op=binop_node.op, right=right_v),
         )  # e.g. v3 = v0 @ v1
         self.primal_stack.insert(self.counter, new_node)  # insert SAC
+        self.var_table[new_v.id] = new_v.id
 
         # initialize adjoint of new v_i
         value = self.generate_call(
@@ -130,8 +136,9 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
         self.ad_SAC(prod, self.get_id(left_v), False)
         deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
-        prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
-        self.ad_SAC(prod, self.get_id(right_v), False)
+        if deriv is not None:
+            prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
+            self.ad_SAC(prod, self.get_id(right_v), False)
 
         self.counter += 1
         return new_v
@@ -190,6 +197,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
 
+        # TODO: if more than one variable is returned, add adjoint seeds as input variables
         self.reverse_init_list[-1].value = self.generate_call(
             func=self.generate_attribute(var="numpy", attr="ones"),
             args=[self.generate_attribute(var=final_v.id, attr="shape")],
@@ -211,6 +219,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         """generates SAC for an arbitrary assignment in function body"""
         # variable was assigned a possibly nested expression
         # replace with v_i node and save old name in dict
+
+        # for expression mode, this is the entry point.
 
         # generate SAC for r.h.s recursively
         new_v = self.visit(node.value)
@@ -272,7 +282,8 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
         """returns the v_i corresponding to node (lookup)"""
-        return ast.Name(id=self.var_table.get(node.id, node.id), ctx=ast.Load())
+        v_id = self.var_table.get(node.id, node.id)
+        return ast.Name(id=v_id, ctx=ast.Load())
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.Name:
         """generates SAC for unary operation and returns the newly assigned v_i"""
@@ -305,7 +316,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         return new_node
 
 
-def transform(func: Callable) -> str:
+def transform(func: Union[Callable, str]) -> str:
     """
     Transforms the source code of a given function to include
     the computation of derivatives using reverse ("adjoint") mode automatic differentiation.
@@ -315,7 +326,7 @@ def transform(func: Callable) -> str:
     and the adjoints of all input variables are returned togethere with the primal result.
     """
     transformer = AdjointNodeTransformer()
-    tree = ast.parse(getsource(func))
+    tree = ast.parse(getsource(func)) if isinstance(func, Callable) else ast.parse(func)
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)
     return ast.unparse(newAST)

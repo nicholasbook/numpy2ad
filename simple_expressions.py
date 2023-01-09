@@ -1,4 +1,14 @@
-import numpy
+import numpy as np
+
+expr = "D = A @ B + C"
+# goal:
+# v0 = A @ B
+# D = v0 + C
+# v0_a = zeros(v0.shape)
+# C_a += D_a
+# v0_a += D_a
+# B_a += A.T @ v0_a
+# A_a += v0_a @ B.T
 
 
 def simple_exp(A, B, C):
@@ -51,7 +61,7 @@ def simple_exp_dot(A, B, C):
     # assert A.ndim == 2 and B.ndim == 2 and C.ndim == 2
     # assert A.shape[1] == B.shape[0] and C.shape == (A.shape[0], B.shape[1])
 
-    AB = numpy.dot(A, B)
+    AB = np.dot(A, B)
     return AB + C
 
 
@@ -74,23 +84,45 @@ def multiline_BinOps(A, B, C):
     E = A - C  # v4 = v0 - v2
     F = D / E  # v5 = v3 / v4
     G = (A + E) * (B + F) * D  # v7=v0+v4; v8=v1+v5; v9=v7*v8
-    H = -numpy.ones(G.shape)  # v10 = -1
+    H = -np.ones(G.shape)  # v10 = -1
     return (G - H) * (G + H)  # v11 = v9 - v10; v12=v9+v10; v13=v11*v12;
     # return v13
 
 
-def LLS(A, y):
-    # v0 = A; v1 = y
-    A_T = numpy.transpose(A)  # v2 = np.transpose(v0)
-    A_T_A = A_T @ A  # v3 = v2 @ A
-    return numpy.inverse(A_T_A) @ A_T @ y
-    # v4 = np.inverse(v3); v5=v4@v2; v6=v5@v1; return v6
-
-
 def quadratic(A, x, b):
-    return 0.5 * numpy.transpose(x) @ A @ x - numpy.tranpose(x) @ b
+    return np.transpose(x) @ A @ x - np.transpose(x) @ b
 
 
-def sigmoid(A: numpy.ndarray):
-    denominator = numpy.ones(A.shape) + numpy.exp(-A)
-    return numpy.divide(numpy.ones(A.shape), denominator)
+def sigmoid(A: np.ndarray):
+    denominator = np.ones(A.shape) + np.exp(-A)
+    return np.divide(np.ones(A.shape), denominator)
+
+
+def OLS(X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """
+    Ordinary Least Squares
+
+    Args:
+        X (np.ndarray): design matrix
+        y (np.ndarra<): observations vector
+
+    Returns:
+        np.ndarray: optimal coefficient vector
+    """
+    return np.linalg.inv(X.T @ X) @ X.T @ y
+
+
+def GLS(X: np.ndarray, M: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Generalized Least Squares
+    Model: y = Xb + e, E[e|X] = 0, Cov[e|X] = M
+
+    Args:
+        X (np.ndarray): design matrix (predictor values)
+        M (np.ndarray): covariance matrix (of error e given X)
+        y (np.ndarray): oberservations vector
+
+    Returns:
+        np.ndarray: optimal coefficient vector
+    """
+    M_inv = np.linalg.inv(M)
+    return np.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y

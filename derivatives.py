@@ -57,18 +57,49 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
                     )
                 )
             )
-        case ast.MatMult:  # c = a @ b
-            return ast.Expr(
-                value=(node.right if wrt is WithRespectTo.Left else node.left)
+        case ast.MatMult:  # C = A @ B -> A_a = C_a B^T, B_a = A^T C_a (order is handled by calling method)
+            transpose = ast.Attribute(
+                value=ast.Name(id="", ctx=ast.Load()), attr="T", ctx=ast.Load()
             )
+            if wrt is WithRespectTo.Left:
+                transpose.value.id = node.right.id
+            else:
+                transpose.value.id = node.left.id
+            return ast.Expr(value=transpose)
+        case ast.Pow:  # b = a**c -> b' = c a**(c-1). c must be const!
+
+            new_right = ast.BinOp(
+                op=ast.Pow(),
+                left=node.left,
+                right=ast.BinOp(
+                    op=ast.Sub(), left=node.right, right=ast.Constant(value=1)
+                ),
+            )
+
+            value = ast.BinOp(op=ast.Mult(), left=node.right, right=new_right)
+            return ast.Expr(value=value) if wrt is WithRespectTo.Left else None
+
         case _:
             raise TypeError("Not implemented yet")
 
 
-def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
+def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
     func = call.func.attr  # e.g. "exp"
 
     match func:
+        case "inv":  # numpy.linalg.inv
+            # B = A^-1 -> A_a += -A^-T @ B_a @ A^-T
+            A_inv_T = deepcopy(call)
+            A_inv_T = ast.Attribute(attr="T", ctx=ast.Load(), value=A_inv_T)
+            placeholder = ast.Name(id="", ctx=ast.Load())
+            right = ast.BinOp(op=ast.MatMult(), left=placeholder, right=A_inv_T)
+            return ast.Expr(
+                value=ast.UnaryOp(
+                    op=ast.USub(),
+                    operand=ast.BinOp(op=ast.MatMult(), left=A_inv_T, right=right),
+                )
+            )
+
         case "exp":
             return call
         case "divide":  # a / b
@@ -76,7 +107,9 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
                 recip = deepcopy(call.func)
                 recip.attr = "reciprocal"  # does not work for integers!
 
-                return ast.Call(func=recip, args=[call.args[1]], keywords=[])
+                return ast.Expr(
+                    value=ast.Call(func=recip, args=[call.args[1]], keywords=[])
+                )
 
             else:  # - a / b ** 2
                 minus_a = ast.UnaryOp(op=ast.USub(), operand=call.args[0])
@@ -86,11 +119,24 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Call:
                 divide = deepcopy(call.func)
                 divide.attr = "divide"
 
-                return ast.Call(func=divide, args=[minus_a, b_squared], keywords=[])
+                return ast.Expr(
+                    value=ast.Call(func=divide, args=[minus_a, b_squared], keywords=[])
+                )
+        case "square":  # x^2
+            mult = deepcopy(call.func)
+            mult.attr = "multiply"
+            return ast.Expr(
+                value=ast.Call(
+                    func=mult, args=[ast.Constant(value=2.0), call.args[0]], keywords=[]
+                )
+            )
         case "ones":
             return None
         case "zeros":
             return None
+        case "transpose":
+            return None
         case _:
             raise ValueError("Not implemented yet")
     # TODO: replace deepcopy (slow) with some method to generate ast.Call
+    # TODO: numpy.power (assert scalar power), linalg.inv, add, subtract, sin, cos, matmul, dot
