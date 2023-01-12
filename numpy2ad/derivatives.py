@@ -2,16 +2,6 @@ import ast
 from enum import Enum
 from copy import deepcopy
 
-# TODO: @/np.dot/np.matmul, np.linalg.inv, +/np.add, -, * (element-wise), **
-
-# TODO: enumerate operators
-
-# TODO: define derivatives
-
-# C = A + B -> A_a += 1 * C_a; B_a += C_a
-# C = A * B -> A_a += B_a * C_a; ...
-# C = A * A -> A_a += 2 * A * C_a
-
 
 class WithRespectTo(Enum):
     Left = 0
@@ -101,7 +91,7 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
             )
 
         case "exp":
-            return call
+            return ast.Expr(value=call)
         case "divide":  # a / b
             if wrt_arg == 0:  # 1 / b
                 recip = deepcopy(call.func)

@@ -1,16 +1,15 @@
 import ast
 from copy import deepcopy, copy
 import re
-from inspect import getsource
-from typing import Callable, Union
 
-# from derivatives import *
+from .derivatives import *
 
-import derivatives
-import importlib
 
-importlib.reload(derivatives)
-from derivatives import *
+# TODO:
+# Implement transformer that works on a single expression i.e. D = A@B+C.
+# The goal is to make it work recursively on the output expressions.
+# Add an option for output to file. Make numpy include optional.
+# Write some unit tests.
 
 
 class ExpressionAdjointTransformer(ast.NodeTransformer):
@@ -348,10 +347,3 @@ def transform_expr(expr: str) -> str:
     transformed_tree = transformer.visit(tree)
     transformed_tree = ast.fix_missing_locations(transformed_tree)
     return ast.unparse(transformed_tree)
-
-
-# TODO:
-# Implement transformer that works on a single expression i.e. D = A@B+C.
-# The goal is to make it work recursively on the output expressions.
-# Add an option for output to file. Make numpy include optional.
-# Write some unit tests.

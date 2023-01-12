@@ -1,7 +1,7 @@
 import ast
 import inspect
 import graphviz as viz
-import ast_traversal
+import numpy2ad.ast_traversal as ast_traversal
 
 
 def draw_AST(function):

@@ -1,5 +1,3 @@
-- Create and name package
-- Implement Adjoint Production Rules
-- Comments in output: 
-	Requires a thrid-party parser/source generator. Possible workarounds: type_comment or docstring.
-	If the goal is human-readable adjoint code, then comments and blank lines are important.
+- Add all required functionality
+- Add tests
+- Publish package

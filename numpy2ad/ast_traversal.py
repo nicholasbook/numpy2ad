@@ -31,11 +31,6 @@ class OperationNodeVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-class CustomNodeTransformer(ast.NodeTransformer):
-    def visit_Assign(self, node):
-        return node
-
-
 class VerboseRecursiveVisitor(ast.NodeVisitor):
     """Recursive node visitor (verbose output)"""
 

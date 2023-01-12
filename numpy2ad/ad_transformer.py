@@ -3,14 +3,7 @@ from copy import deepcopy, copy
 import re
 from inspect import getsource
 from typing import Callable, Union
-
-# from derivatives import *
-
-import derivatives
-import importlib
-
-importlib.reload(derivatives)
-from derivatives import *
+from .derivatives import *
 
 
 class AdjointNodeTransformer(ast.NodeTransformer):
@@ -275,7 +268,7 @@ class AdjointNodeTransformer(ast.NodeTransformer):
                 if d is not None:
                     new_v_a_c = copy(new_v_a)
                     new_v_a_c.ctx = ast.Load()
-                    prod = ast.BinOp(op=ast.Mult(), left=d, right=new_v_a_c)
+                    prod = ast.BinOp(op=ast.Mult(), left=d.value, right=new_v_a_c)
                     self.ad_SAC(prod, self.get_id(node.args[i]), False)
 
         return new_v
