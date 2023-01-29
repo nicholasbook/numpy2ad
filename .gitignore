@@ -1,4 +1,5 @@
 *.bak
+*.png
 __pycache__
 *.egg-info
 tmp/
