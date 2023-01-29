@@ -128,5 +128,9 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
             return None
         case _:
             raise ValueError("Not implemented yet")
-    # TODO: replace deepcopy (slow) with some method to generate ast.Call
-    # TODO: numpy.power (assert scalar power), linalg.inv, add, subtract, sin, cos, matmul, dot
+
+
+# TODO:
+# replace deepcopy (slow) with some method to generate ast.Call
+# use linalg.solve for inverse
+# TODO: numpy.power (assert scalar power), linalg.inv, add, subtract, sin, cos, matmul, dot

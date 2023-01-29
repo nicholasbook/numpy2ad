@@ -3,32 +3,7 @@
 import ast
 import graphviz as viz
 import inspect
-
-
-def print_classes(tree):
-    """Prints all node classes found in tree"""
-    for node in ast.walk(tree):
-        print(node.__class__.__name__)
-
-
-class OperationNodeVisitor(ast.NodeVisitor):
-    """Prints the line number for some common operations when found in AST."""
-
-    def visit_BinOp(self, node):
-        print(f"Found BinOp at {node.lineno}\n")
-        self.generic_visit(node)  # propagate visit to children
-
-    def visit_Assign(self, node):
-        print(f"Found Assign at {node.lineno}\n")
-        self.generic_visit(node)
-
-    def visit_Return(self, node):
-        print(f"Found Return at {node.lineno}\n")
-        self.generic_visit(node)
-
-    def visit_Call(self, node):
-        print(f"Found Call at {node.lineno}\n")
-        self.generic_visit(node)
+from typing import Callable, Union
 
 
 class VerboseRecursiveVisitor(ast.NodeVisitor):
@@ -133,6 +108,7 @@ class RecordGraphVisitor(ast.NodeVisitor):
         self.FunctionDef_c = 0
         self.Name_c = 0
         self.Assign_c = 0
+        self.AugAssign_c = 0
         self.BinOp_c = 0
         self.Call_c = 0
         self.Attr_c = 0
@@ -166,6 +142,8 @@ class RecordGraphVisitor(ast.NodeVisitor):
                         + str(ast_node.op.__class__.__name__)
                         + "\n"
                     )
+                elif isinstance(ast_node, ast.AugAssign):
+                    continue
                 else:  # default print
                     text = text + str(attr[0]) + ":" + str(attr[1]) + "\n"
 
@@ -200,6 +178,11 @@ class RecordGraphVisitor(ast.NodeVisitor):
         self.Assign_c += 1
 
     @recursive
+    def visit_AugAssign(self, node):
+        self.add_node(node, self.AugAssign_c)
+        self.AugAssign_c += 1
+
+    @recursive
     def visit_BinOp(self, node):
         self.add_node(node, self.BinOp_c)
         self.BinOp_c += 1
@@ -223,8 +206,32 @@ class RecordGraphVisitor(ast.NodeVisitor):
         pass
 
 
-# --- convenience methods ---
-def print_AST(function, verbose=True):
-    tree = ast.parse(inspect.getsource(function))
+def print_AST(function: Union[str, Callable]):
+    """Prints the AST of the given function.
+
+    Args:
+        function (str or function): the function object or its code
+    """
+    tree = (
+        ast.parse(inspect.getsource(function))
+        if isinstance(function, Callable)
+        else ast.parse(function)
+    )
     v = VerboseRecursiveVisitor()
     v.visit(tree)
+
+
+def draw_AST(function: Union[str, Callable]):
+    """Draws the given AST in a Jupyter Notebook Cell.
+    TODO: add edge labels
+    Args:
+        function (str or function): the function object or its code
+    """
+    vis = RecordGraphVisitor()
+    tree = (
+        ast.parse(inspect.getsource(function))
+        if isinstance(function, Callable)
+        else ast.parse(function)
+    )
+    vis.visit(tree)
+    return vis.graph

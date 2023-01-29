@@ -5,13 +5,6 @@ import re
 from .derivatives import *
 
 
-# TODO:
-# Implement transformer that works on a single expression i.e. D = A@B+C.
-# The goal is to make it work recursively on the output expressions.
-# Add an option for output to file. Make numpy include optional.
-# Write some unit tests.
-
-
 class ExpressionAdjointTransformer(ast.NodeTransformer):
     """
     This AST transformer takes a given expression e.g. D = A @ B + C
@@ -128,8 +121,10 @@ class ExpressionAdjointTransformer(ast.NodeTransformer):
 
     def _make_BinOp_SAC(self, binop_node: ast.BinOp) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable."""
-        operator = (
-            ast.MatMult() if isinstance(binop_node.op, ast.MatMult) else ast.Mult()
+        operator, swap = (
+            (ast.MatMult(), True)
+            if isinstance(binop_node.op, ast.MatMult)
+            else (ast.Mult(), False)
         )
         # left and right must have been assigned to some v_i already
         left_v = self.visit(binop_node.left)  # calls visit_Name
@@ -178,7 +173,7 @@ class ExpressionAdjointTransformer(ast.NodeTransformer):
 
         l_deriv = derivative_BinOp(new_node.value, WithRespectTo.Left)  # ast.Expr
         self._generate_ad_SAC(
-            rhs=__make_rhs(l_deriv, swap=True),
+            rhs=__make_rhs(l_deriv, swap=swap),
             target=self._make_ad_target(left_v),
             init_mode=False,
         )
@@ -310,14 +305,13 @@ class ExpressionAdjointTransformer(ast.NodeTransformer):
                     rhs=self._make_attribute(var=node.value.id + "_a", attr="T"),
                     target=self._make_ad_target(new_v),
                     init_mode=True,
-                )  # e.g. v0_a = A_a^T
+                )  # e.g. v0_a = A_a.T
                 return new_v
             else:  # recursion
                 node.value = self.visit(node.value)
                 return self.visit(node)
         else:
             return node
-        # TODO: support for (A @ B).T (Attribute(BinOp))
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         for expr in node.body:  # visit all nodes
@@ -335,15 +329,15 @@ def transform_expr(expr: str) -> str:
     """Transforms a given assignment expression to adjoint code.
 
     Args:
-        expr (str): _description_
+        expr (str): the expression
 
     Returns:
-        list: _description_
+        str: the transformed expression
     """
     assert isinstance(expr, str)
     transformer = ExpressionAdjointTransformer()
     tree = ast.parse(expr)
-    assert isinstance(tree.body[0], ast.Assign)  # or AugAssign
+    assert isinstance(tree.body[0], (ast.Assign, ast.AugAssign))
     transformed_tree = transformer.visit(tree)
     transformed_tree = ast.fix_missing_locations(transformed_tree)
     return ast.unparse(transformed_tree)

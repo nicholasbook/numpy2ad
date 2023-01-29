@@ -74,10 +74,19 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         Generates and inserts reverse (adjoint) single assignment code for given right hand side.
         """
         new_v = ast.Name(id="v{}_a".format(target_v), ctx=ast.Store())
+        simplify = False
+        aug_op = None
+        if isinstance(rhs, ast.UnaryOp):  # simplify "+= +-y_a" to "+-= y_a"
+            simplify = True
+            aug_op = ast.Add() if isinstance(rhs.op, ast.UAdd) else ast.Sub()
+            rhs = rhs.operand
+
         new_node = (
             ast.Assign(targets=[new_v], value=rhs)
             if init_mode
-            else ast.AugAssign(op=ast.Add(), target=new_v, value=rhs)
+            else ast.AugAssign(
+                op=(aug_op if simplify else ast.Add()), target=new_v, value=rhs
+            )
         )
 
         if init_mode:
@@ -102,6 +111,11 @@ class AdjointNodeTransformer(ast.NodeTransformer):
 
     def BinOp_SAC(self, binop_node: ast.BinOp) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable."""
+        operator, swap = (
+            (ast.MatMult(), True)
+            if isinstance(binop_node.op, ast.MatMult)
+            else (ast.Mult(), False)
+        )
         # left and right must have been assigned to some v_i already
         left_v = self.visit(binop_node.left)  # calls visit_Name
         right_v = self.visit(binop_node.right)
@@ -125,13 +139,29 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         # generate derivative of BinOp: left_a/right_a += f' lhs_a
         new_v_a_c = copy(new_v_a)
         new_v_a_c.ctx = ast.Load()
+
+        def __make_rhs(deriv: ast.Expr, swap=False):
+            if isinstance(deriv.value, ast.Constant):  # simplify +-1.0 * y_a to +-y_a
+                return ast.UnaryOp(
+                    op=(ast.UAdd() if deriv.value.value > 0 else ast.USub()),
+                    operand=new_v_a_c,
+                )
+            else:
+                return ast.BinOp(
+                    op=operator,
+                    left=deriv.value if not swap else new_v_a_c,
+                    right=new_v_a_c if not swap else deriv.value,
+                )  # swap order in case of C=AB -> A_a=B^T C_a
+
         deriv = derivative_BinOp(new_node.value, WithRespectTo.Left)  # ast.Expr
-        prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
-        self.ad_SAC(prod, self.get_id(left_v), False)
+        self.ad_SAC(
+            rhs=__make_rhs(deriv, swap=swap),
+            target_v=self.get_id(left_v),
+            init_mode=False,
+        )
+
         deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
-        if deriv is not None:
-            prod = ast.BinOp(op=ast.Mult(), left=deriv.value, right=new_v_a_c)
-            self.ad_SAC(prod, self.get_id(right_v), False)
+        self.ad_SAC(__make_rhs(deriv), self.get_id(right_v), False)
 
         self.counter += 1
         return new_v
@@ -189,13 +219,12 @@ class AdjointNodeTransformer(ast.NodeTransformer):
         """generates SAC for expression that is returned and replaces it with
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
+        self.return_list.insert(0, final_v)  # assumes that there is only one output
 
-        # TODO: if more than one variable is returned, add adjoint seeds as input variables
-        self.reverse_init_list[-1].value = self.generate_call(
-            func=self.generate_attribute(var="numpy", attr="ones"),
-            args=[self.generate_attribute(var=final_v.id, attr="shape")],
-        )
-        self.return_list.insert(0, final_v)
+        # remove initialization and make it an input
+        final_v_a: ast.Assign = self.reverse_init_list[-1]
+        final_v_a.value = ast.Name(id="Y_a", ctx=ast.Load())
+        self.functionDef.args.args.append(ast.arg(arg="Y_a"))
 
         return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
 
@@ -323,4 +352,10 @@ def transform(func: Union[Callable, str]) -> str:
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)
     return ast.unparse(newAST)
-    # TODO: make transform(transform(...)) work
+
+
+# TODO:
+# matrix derivatives
+# underscore for internal methods
+# factor out the shared logic between func_ and expr_transformer
+# make transform(transform(...)) work
