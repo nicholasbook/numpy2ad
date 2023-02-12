@@ -2,6 +2,10 @@ import ast
 from enum import Enum
 from copy import deepcopy
 
+# TODO:
+# replace deepcopy (slow) with some method to generate ast.Call
+# use linalg.solve for inverse
+
 
 class WithRespectTo(Enum):
     Left = 0
@@ -12,6 +16,8 @@ def derivative_UnOp(node: ast.UnaryOp) -> ast.Expr:
     match type(node.op):
         case ast.USub:  # b = -a
             return ast.Expr(value=ast.Constant(value=-1.0))
+        case _:
+            raise ValueError("Not implemented yet.")
 
 
 def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
@@ -57,7 +63,6 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
                 transpose.value.id = node.left.id
             return ast.Expr(value=transpose)
         case ast.Pow:  # b = a**c -> b' = c a**(c-1). c must be const!
-
             new_right = ast.BinOp(
                 op=ast.Pow(),
                 left=node.left,
@@ -76,6 +81,11 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
 def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
     func = call.func.attr  # e.g. "exp"
 
+    # def _make_numpy_Call(type: str, args: list):
+    #     # required: args and keywords
+    #     function = ast.Attribute(value="numpy", attr=type, ctx=ast.Load())
+    #     return ast.Call(func=function, args=args, keywords=[])
+
     match func:
         case "inv":  # numpy.linalg.inv
             # B = A^-1 -> A_a += -A^-T @ B_a @ A^-T
@@ -89,7 +99,6 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
                     operand=ast.BinOp(op=ast.MatMult(), left=A_inv_T, right=right),
                 )
             )
-
         case "exp":
             return ast.Expr(value=call)
         case "divide":  # a / b
@@ -128,9 +137,3 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
             return None
         case _:
             raise ValueError("Not implemented yet")
-
-
-# TODO:
-# replace deepcopy (slow) with some method to generate ast.Call
-# use linalg.solve for inverse
-# TODO: numpy.power (assert scalar power), linalg.inv, add, subtract, sin, cos, matmul, dot
