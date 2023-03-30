@@ -1,6 +1,4 @@
 import ast
-from copy import deepcopy, copy
-import re
 
 from .derivatives import *
 from .base_transformer import AdjointTransformer
@@ -11,6 +9,8 @@ class ExpressionTransformer(AdjointTransformer):
     This AST transformer takes a given expression e.g. "D = A @ B + C"
     and transforms the primal section to SAC
     and inserts a reverse section with Adjoint code.
+
+    Original variable names are left unchanged and their adjoints are assumed to be defined.
     """
 
     assign_target = None  # lhs of expression
@@ -20,14 +20,22 @@ class ExpressionTransformer(AdjointTransformer):
         super().__init__()
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
+        """Recursively visits binary operation and generates SAC until it resolves to single-variables.
+
+        Args:
+            node (ast.BinOp): the BinOp node
+
+        Returns:
+            ast.Name: the transformed node
+        """
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
-            new_node = self._make_BinOp_SAC(
+            new_node = self._make_BinOp_SAC_AD(
                 node, self.assign_target if self.binop_depth == 0 else None
             )
             return new_node
         else:
-            self.binop_depth += 1
+            self.binop_depth += 1  # count recursion depth to leave left-hand side unchanged
             # visit children recursively to handle nested expressions
             node.left = self.visit(node.left)  # e.g. A @ B -> v3
             node.right = self.visit(node.right)  # e.g. C -> v2
@@ -42,7 +50,9 @@ class ExpressionTransformer(AdjointTransformer):
         # for expression mode, this is the entry point.
         self.assign_target = node.targets[0]
 
-        super().visit_Assign(node)
+        new_v = self.visit(node.value)
+        # remember v_i
+        self.var_table[self.assign_target.id] = new_v.id
 
         self.assign_target = None
 
@@ -62,6 +72,14 @@ class ExpressionTransformer(AdjointTransformer):
         return new_v
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Visits Module node (root). Visit is forwarded and body is replaced with transformed code.
+
+        Args:
+            node (ast.Module): the Module node
+
+        Returns:
+            ast.Module: the transformed node
+        """
         for expr in node.body:  # visit all nodes
             self.visit(expr)
 

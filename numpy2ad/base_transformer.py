@@ -7,7 +7,8 @@ from .derivatives import *
 class AdjointTransformer(ast.NodeTransformer):
     """Base class for other adjoint code transformers."""
 
-    var_table = None  # dictionary for transformed variables i.e. "A" : "v0" (it also keeps track of all v_i)
+    # dictionary for transformed variables i.e. "A" : "v0" (it also keeps track of all v_i)
+    var_table = None
     primal_stack = None  # SAC code
     counter = 0  # SAC counter for v_i
     reverse_stack = None  # adjoint code
@@ -42,7 +43,7 @@ class AdjointTransformer(ast.NodeTransformer):
         return self._make_call(
             func=self._make_attribute(var="numpy", attr="zeros"),
             args=[self._make_attribute(var=var, attr="shape")],
-        )
+        )  # this does not work for scalars !!!
 
     def _make_ctx_load(self, node: ast.Name) -> ast.Name:
         new_node = copy(node)
@@ -97,7 +98,7 @@ class AdjointTransformer(ast.NodeTransformer):
 
         return target
 
-    def _make_BinOp_SAC(self, binop_node: ast.BinOp, target=None) -> ast.Name:
+    def _make_BinOp_SAC_AD(self, binop_node: ast.BinOp, target=None) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable."""
         operator, swap = (
             (ast.MatMult(), True)
@@ -149,7 +150,8 @@ class AdjointTransformer(ast.NodeTransformer):
                     right=new_v_a_c if not swap else deriv.value,
                 )  # swap order in case of C=AB -> A_a=B^T C_a
 
-        l_deriv = derivative_BinOp(new_node.value, WithRespectTo.Left)  # ast.Expr
+        l_deriv = derivative_BinOp(
+            new_node.value, WithRespectTo.Left)  # ast.Expr
         self._generate_ad_SAC(
             rhs=__make_rhs(l_deriv, swap=swap),
             target=self._make_ad_target(left_v),
@@ -157,8 +159,10 @@ class AdjointTransformer(ast.NodeTransformer):
         )
 
         # rhs of BinOp
-        r_deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
-        self._generate_ad_SAC(__make_rhs(r_deriv), self._make_ad_target(right_v), False)
+        r_deriv = derivative_BinOp(
+            new_node.value, WithRespectTo.Right)  # ast.Expr
+        self._generate_ad_SAC(__make_rhs(r_deriv),
+                              self._make_ad_target(right_v), False)
 
         self.counter += 1
         return new_v
@@ -253,7 +257,8 @@ class AdjointTransformer(ast.NodeTransformer):
             if isinstance(node.value, ast.Name):  # A^T
                 new_v = self._generate_SAC(node)
                 self._generate_ad_SAC(
-                    rhs=self._make_attribute(var=node.value.id + "_a", attr="T"),
+                    rhs=self._make_attribute(
+                        var=node.value.id + "_a", attr="T"),
                     target=self._make_ad_target(new_v),
                     init_mode=True,
                 )  # e.g. v0_a = A_a.T
@@ -268,10 +273,22 @@ class AdjointTransformer(ast.NodeTransformer):
         """generates SAC for an arbitrary assignment in function body"""
         # variable was assigned a possibly nested expression
         # replace with v_i node and save old name in dict
+        assert len(node.targets) == 1
 
         # generate SAC for r.h.s recursively
         new_v = self.visit(node.value)
         # remember v_i
-        self.var_table[self.assign_target.id] = new_v.id
+        self.var_table[node.targets[0].id] = new_v.id
 
         return None  # old assignment is removed
+
+    def visit_AugAssign(self, node: ast.AugAssign):
+        # overwriting of variables must be dealt with
+        # e.g. A += B <=> A = A + B => v = A; A = v + B => B_a += A_a; v_a += A_a; A_a += v_a
+        pass
+        # if isinstance(node.op, ast.Add):  # A += A
+        #     rhs = ast.BinOp(op=ast.Add(), left=self._make_ctx_load(
+        #         node.target), right=node.value)  # A + A
+        #     new_v = self.visit(rhs)  # generate SAC
+        #     self.var_table[node.target.id] = new_v.id  # ??
+        # return None  # remove?

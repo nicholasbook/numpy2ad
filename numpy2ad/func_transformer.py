@@ -1,5 +1,5 @@
 import ast
-from copy import deepcopy, copy
+from copy import deepcopy
 from inspect import getsource
 from typing import Callable, Union
 from .derivatives import *
@@ -29,9 +29,17 @@ class FunctionTransformer(AdjointTransformer):
             self.return_list = list()
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
+        """Recursively visits binary operation and generates SAC until it resolves to single-variables.
+
+        Args:
+            node (ast.BinOp): the BinOp node
+
+        Returns:
+            ast.Name: the transformed node
+        """
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
-            return self._make_BinOp_SAC(node)
+            return self._make_BinOp_SAC_AD(node)
         else:
             # visit children recursively to handle nested expressions
             node.left = self.visit(node.left)  # e.g. A @ B -> v3
@@ -82,11 +90,13 @@ class FunctionTransformer(AdjointTransformer):
             ad_arg = a.arg + "_a"
             arguments.args.append(ast.arg(arg=ad_arg))
 
-            new_v = ast.Name(id="v{}_a".format(self.counter - 1), ctx=ast.Store())
+            new_v = ast.Name(id="v{}_a".format(
+                self.counter - 1), ctx=ast.Store())
             old_var_ad = ast.Name(id=ad_arg, ctx=ast.Load())
             self._generate_ad_SAC(old_var_ad, new_v, True)
 
-            self.return_list.append(new_v)  # remember adjoints for return statement
+            # remember adjoints for return statement
+            self.return_list.append(new_v)
 
             # TODO: add type hints
 
@@ -96,14 +106,16 @@ class FunctionTransformer(AdjointTransformer):
         """generates SAC for expression that is returned and replaces it with
         a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
-        self.return_list.insert(0, final_v)  # assumes that there is only one output
+        # assumes that there is only one output
+        self.return_list.insert(0, final_v)
 
         # remove initialization and make it an input
         final_v_a: ast.Assign = self.reverse_init_list[-1]
         final_v_a.value = ast.Name(id="Y_a", ctx=ast.Load())
         self.functionDef.args.args.append(ast.arg(arg="Y_a"))
 
-        return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
+        return_list = [ast.Name(id=arg.id, ctx=ast.Load())
+                       for arg in self.return_list]
 
         new_return = ast.Tuple(
             elts=return_list,
@@ -116,9 +128,15 @@ class FunctionTransformer(AdjointTransformer):
         return None  # original Return is not used
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Visits Module node (root). Visit is forwarded and numpy import statement is inserted.        
+
+        Returns:
+            ast.Module: the transformed node
+        """
         new_node = self.generic_visit(node)
         # insert "import numpy"
-        new_node.body.insert(0, ast.Import(names=[ast.alias(name="numpy")]))
+        new_node.body.insert(0, ast.Import(
+            names=[ast.alias(name="numpy")]))  # 'as np' ?
         return new_node
 
 
@@ -132,14 +150,15 @@ def transform(func: Union[Callable, str], output_file: str = None) -> str:
     and the adjoints of all input variables are returned togethere with the primal result.
     """
     transformer = FunctionTransformer()
-    tree = ast.parse(getsource(func)) if isinstance(func, Callable) else ast.parse(func)
+    tree = ast.parse(getsource(func)) if isinstance(
+        func, Callable) else ast.parse(func)  # does not seem to work for indended code
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)
     new_code = ast.unparse(newAST)
-    if output_file is not None:
+    if output_file is not None:  # TODO: create __init__.py in target directory
         file = open(output_file, "w")
         file.write(new_code)
         file.close()
-        return None
+        return
     else:
         return new_code
