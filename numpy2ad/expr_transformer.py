@@ -13,9 +13,6 @@ class ExpressionTransformer(AdjointTransformer):
     Original variable names are left unchanged and their adjoints are assumed to be defined.
     """
 
-    assign_target = None  # lhs of expression
-    binop_depth = 0  # recursion counter
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -31,11 +28,13 @@ class ExpressionTransformer(AdjointTransformer):
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
             new_node = self._make_BinOp_SAC_AD(
-                node, self.assign_target if self.binop_depth == 0 else None
+                node, self.return_target if self.binop_depth == 0 else None
             )
             return new_node
         else:
-            self.binop_depth += 1  # count recursion depth to leave left-hand side unchanged
+            self.binop_depth += (
+                1  # count recursion depth to leave left-hand side unchanged
+            )
             # visit children recursively to handle nested expressions
             node.left = self.visit(node.left)  # e.g. A @ B -> v3
             node.right = self.visit(node.right)  # e.g. C -> v2
@@ -48,13 +47,13 @@ class ExpressionTransformer(AdjointTransformer):
         # replace with v_i node and save old name in dict
 
         # for expression mode, this is the entry point.
-        self.assign_target = node.targets[0]
+        self.return_target = node.targets[0]  # TODO: fix for Call
 
         new_v = self.visit(node.value)
         # remember v_i
-        self.var_table[self.assign_target.id] = new_v.id
+        self.var_table[self.return_target.id] = new_v.id
 
-        self.assign_target = None
+        self.return_target = None
 
         return None  # old assignment is removed
 

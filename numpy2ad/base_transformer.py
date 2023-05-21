@@ -7,22 +7,21 @@ from .derivatives import *
 class AdjointTransformer(ast.NodeTransformer):
     """Base class for other adjoint code transformers."""
 
-    # dictionary for transformed variables i.e. "A" : "v0" (it also keeps track of all v_i)
-    var_table = None
-    primal_stack = None  # SAC code
-    counter = 0  # SAC counter for v_i
-    reverse_stack = None  # adjoint code
-    reverse_init_list = None  # adjoint initialization code
+    # TODO: docstring
+    var_table: dict = None  # dictionary for transformed variables i.e. "A" : "v0"
+    primal_stack: list = None  # SAC code
+    counter: int = 0  # SAC counter for v_i
+    reverse_stack: list = None  # adjoint code
+    reverse_init_list: list = None  # adjoint initialization code
+
+    binop_depth: int = 0  # recursion counter
+    return_target = None
 
     def __init__(self) -> None:
-        if self.var_table is None:
-            self.var_table = dict()
-        if self.primal_stack is None:
-            self.primal_stack = list()
-        if self.reverse_stack is None:
-            self.reverse_stack = list()
-        if self.reverse_init_list is None:
-            self.reverse_init_list = list()
+        self.var_table = dict()
+        self.primal_stack = list()
+        self.reverse_stack = list()
+        self.reverse_init_list = list()
 
     def _get_id(self, node: ast.Name) -> str:
         res = re.search(r"v(\d+)", node.id)
@@ -43,7 +42,7 @@ class AdjointTransformer(ast.NodeTransformer):
         return self._make_call(
             func=self._make_attribute(var="numpy", attr="zeros"),
             args=[self._make_attribute(var=var, attr="shape")],
-        )  # this does not work for scalars !!!
+        )  # this does not work for scalars !! # TODO: use np.zeros_like
 
     def _make_ctx_load(self, node: ast.Name) -> ast.Name:
         new_node = copy(node)
@@ -89,6 +88,7 @@ class AdjointTransformer(ast.NodeTransformer):
             )
         )
 
+        # TODO: consider removing init list and instead using a non-incremental assignment the first time an adjoint variable is used
         if init_mode:
             self.reverse_init_list.append(new_node)
         else:
@@ -98,8 +98,15 @@ class AdjointTransformer(ast.NodeTransformer):
 
         return target
 
-    def _make_BinOp_SAC_AD(self, binop_node: ast.BinOp, target=None) -> ast.Name:
-        """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable."""
+    def _make_BinOp_SAC_AD(
+        self, binop_node: ast.BinOp, target: ast.Name = None
+    ) -> ast.Name:
+        """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable.
+
+        Args:
+            binop_node (ast.BinOp): the binary operation
+            target (ast.Name): target node for SAC. If not specified, v{counter} is used.
+        """
         operator, swap = (
             (ast.MatMult(), True)
             if isinstance(binop_node.op, ast.MatMult)
@@ -150,8 +157,7 @@ class AdjointTransformer(ast.NodeTransformer):
                     right=new_v_a_c if not swap else deriv.value,
                 )  # swap order in case of C=AB -> A_a=B^T C_a
 
-        l_deriv = derivative_BinOp(
-            new_node.value, WithRespectTo.Left)  # ast.Expr
+        l_deriv = derivative_BinOp(new_node.value, WithRespectTo.Left)  # ast.Expr
         self._generate_ad_SAC(
             rhs=__make_rhs(l_deriv, swap=swap),
             target=self._make_ad_target(left_v),
@@ -159,16 +165,16 @@ class AdjointTransformer(ast.NodeTransformer):
         )
 
         # rhs of BinOp
-        r_deriv = derivative_BinOp(
-            new_node.value, WithRespectTo.Right)  # ast.Expr
-        self._generate_ad_SAC(__make_rhs(r_deriv),
-                              self._make_ad_target(right_v), False)
+        r_deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
+        self._generate_ad_SAC(__make_rhs(r_deriv), self._make_ad_target(right_v), False)
 
         self.counter += 1
         return new_v
 
     def visit_Constant(self, node: ast.Constant) -> ast.Name:
         """generates SAC for constant assignment and returns the newly assigned v_i"""
+        if isinstance(node.value, str):
+            return node  # docstring is removed
         new_v = self._generate_SAC(node)
         self._generate_ad_SAC(
             ast.Constant(value=0.0), self._make_ad_target(new_v), True
@@ -190,6 +196,7 @@ class AdjointTransformer(ast.NodeTransformer):
                 node.args[i] = arg_v  # replace the argument names
 
         # SAC for lhs
+        # TODO: use return_target if not None (skip init)
         new_v = self._generate_SAC(node)
 
         # initialize adjoint of lhs
@@ -209,6 +216,7 @@ class AdjointTransformer(ast.NodeTransformer):
                         target=self._make_ad_target(node.args[i]),
                         init_mode=False,
                     )
+                    # TODO: v = np.linalg.inv(A) -> store 'A_inv' : 'v' in inv_table
                 elif d is not None:
                     prod = ast.BinOp(
                         op=ast.Mult(), left=d, right=self._make_ctx_load(new_v_a)
@@ -257,8 +265,7 @@ class AdjointTransformer(ast.NodeTransformer):
             if isinstance(node.value, ast.Name):  # A^T
                 new_v = self._generate_SAC(node)
                 self._generate_ad_SAC(
-                    rhs=self._make_attribute(
-                        var=node.value.id + "_a", attr="T"),
+                    rhs=self._make_attribute(var=node.value.id + "_a", attr="T"),
                     target=self._make_ad_target(new_v),
                     init_mode=True,
                 )  # e.g. v0_a = A_a.T

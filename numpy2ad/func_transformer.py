@@ -20,13 +20,12 @@ class FunctionTransformer(AdjointTransformer):
     and inserts a reverse section with Adjoint code.
     """
 
-    functionDef = None  # ast.FunctionDef
-    return_list = None  # list of values to return
+    functionDef: ast.FunctionDef = None
+    return_list: list[ast.Name] = None  # list of values to return
 
     def __init__(self) -> None:
         super().__init__()
-        if self.return_list is None:
-            self.return_list = list()
+        self.return_list = list()
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
         """Recursively visits binary operation and generates SAC until it resolves to single-variables.
@@ -39,11 +38,18 @@ class FunctionTransformer(AdjointTransformer):
         """
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
-            return self._make_BinOp_SAC_AD(node)
+            return self._make_BinOp_SAC_AD(
+                node,
+                self._make_ctx_load(ast.Name(id="out"))
+                if self.binop_depth == 0 and isinstance(self.return_target, ast.BinOp)
+                else None,
+            )
         else:
             # visit children recursively to handle nested expressions
+            self.binop_depth += 1
             node.left = self.visit(node.left)  # e.g. A @ B -> v3
             node.right = self.visit(node.right)  # e.g. C -> v2
+            self.binop_depth -= 1
             return self.visit(node)  # recursion
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.Name:
@@ -82,21 +88,15 @@ class FunctionTransformer(AdjointTransformer):
         """Generates SAC for each function argument"""
         old_arguments = arguments.args.copy()
         for a in old_arguments:
-            # SAC for arguments
-            old_var = ast.Name(id=a.arg, ctx=ast.Load())
-            self._generate_SAC(old_var)
+            # store in symbol table
+            self.var_table[a.arg] = a.arg
 
             # append adjoint arguments
             ad_arg = a.arg + "_a"
             arguments.args.append(ast.arg(arg=ad_arg))
 
-            new_v = ast.Name(id="v{}_a".format(
-                self.counter - 1), ctx=ast.Store())
-            old_var_ad = ast.Name(id=ad_arg, ctx=ast.Load())
-            self._generate_ad_SAC(old_var_ad, new_v, True)
-
             # remember adjoints for return statement
-            self.return_list.append(new_v)
+            self.return_list.append(self._make_ctx_load(ast.Name(id=ad_arg)))
 
             # TODO: add type hints
 
@@ -104,18 +104,19 @@ class FunctionTransformer(AdjointTransformer):
 
     def visit_Return(self, node: ast.Return) -> None:
         """generates SAC for expression that is returned and replaces it with
-        a return of a tuple of primal results and adjoints of function arguments (derivatives)"""
+        a return of a tuple of primal results and adjoints of function arguments (derivatives)
+        """
+        # self.final_assign = True
+        self.return_target = node.value
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
+        final_v.id = "out"
+
         # assumes that there is only one output
         self.return_list.insert(0, final_v)
 
-        # remove initialization and make it an input
-        final_v_a: ast.Assign = self.reverse_init_list[-1]
-        final_v_a.value = ast.Name(id="Y_a", ctx=ast.Load())
-        self.functionDef.args.args.append(ast.arg(arg="Y_a"))
+        self.functionDef.args.args.append(ast.arg(arg="out_a"))
 
-        return_list = [ast.Name(id=arg.id, ctx=ast.Load())
-                       for arg in self.return_list]
+        return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
 
         new_return = ast.Tuple(
             elts=return_list,
@@ -128,15 +129,16 @@ class FunctionTransformer(AdjointTransformer):
         return None  # original Return is not used
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        """Visits Module node (root). Visit is forwarded and numpy import statement is inserted.        
+        """Visits Module node (root). Visit is forwarded and numpy import statement is inserted.
 
         Returns:
             ast.Module: the transformed node
         """
         new_node = self.generic_visit(node)
         # insert "import numpy"
-        new_node.body.insert(0, ast.Import(
-            names=[ast.alias(name="numpy")]))  # 'as np' ?
+        new_node.body.insert(
+            0, ast.Import(names=[ast.alias(name="numpy")])
+        )  # 'as np' ?
         return new_node
 
 
@@ -150,8 +152,9 @@ def transform(func: Union[Callable, str], output_file: str = None) -> str:
     and the adjoints of all input variables are returned togethere with the primal result.
     """
     transformer = FunctionTransformer()
-    tree = ast.parse(getsource(func)) if isinstance(
-        func, Callable) else ast.parse(func)  # does not seem to work for indended code
+    tree = (
+        ast.parse(getsource(func)) if isinstance(func, Callable) else ast.parse(func)
+    )  # does not seem to work for indended code
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)
     new_code = ast.unparse(newAST)
