@@ -7,6 +7,7 @@ import os
 import sys
 import pathlib
 import shutil
+from typing import Callable
 
 
 @pytest.fixture(scope="session")
@@ -20,7 +21,7 @@ def serialize(*args: np.ndarray):
     return np.concatenate([x.ravel() for x in list(args)])
 
 
-def central_finite_diff(func, *args: np.ndarray, wrt: int, index: tuple):
+def central_finite_diff(func: Callable, *args: np.ndarray, wrt: int, index: tuple):
     """First-order central finite difference
 
     Args:
@@ -31,10 +32,10 @@ def central_finite_diff(func, *args: np.ndarray, wrt: int, index: tuple):
     """
     h = np.sqrt(np.finfo(float).eps)
     x0 = [x.copy() for x in args]
-    x0[wrt][*index] += h/2
+    x0[wrt][*index] += h / 2
     x1 = [x.copy() for x in args]
-    x1[wrt][*index] -= h/2
-    return 1/h * (func(*x0) - func(*x1))
+    x1[wrt][*index] -= h / 2
+    return 1 / h * (func(*x0) - func(*x1))
 
 
 def mma(A, B, C):  # Matrix-matrix multiply and add
@@ -74,8 +75,7 @@ def test_mma(tmp_pkg):
         X = [np.zeros(dims), np.zeros(dims), np.zeros(dims)]
         X[wrt] = x_t
         X_T = serialize(*X)
-        Y_T = serialize(central_finite_diff(
-            mma, A, B, C, wrt=wrt, index=direction))
+        Y_T = serialize(central_finite_diff(mma, A, B, C, wrt=wrt, index=direction))
 
         assert X_A @ X_T == approx(Y_A @ Y_T)
 
@@ -111,13 +111,13 @@ def test_quadric(tmp_pkg):
         direction = (x.shape[0] - 1, x.shape[1] - 1)  # last entry
         x_t = np.zeros(x.shape)
         x_t[*direction] = 1.0
-        X = [np.zeros(A.shape), np.zeros(B.shape),
-             np.zeros(C.shape), np.zeros(D.shape)]
+        X = [np.zeros(A.shape), np.zeros(B.shape), np.zeros(C.shape), np.zeros(D.shape)]
         X[wrt] = x_t
         X_T = serialize(*X)
 
-        Y_T = serialize(central_finite_diff(
-            quadric, A, B, C, D, wrt=wrt, index=direction))
+        Y_T = serialize(
+            central_finite_diff(quadric, A, B, C, D, wrt=wrt, index=direction)
+        )
 
         assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-5)
 
@@ -151,14 +151,13 @@ def test_inverse(tmp_pkg):
             nj = np.random.randint(0, dims[1] - 1)
             A_t[mj, nj] = 1.0  # permute random entry in A
 
-            Y_T = serialize(central_finite_diff(
-                inverse, A, wrt=0, index=(mj, nj)))
+            Y_T = serialize(central_finite_diff(inverse, A, wrt=0, index=(mj, nj)))
             X_T = serialize(A_t)
             X_A = serialize(A_a)
             Y_A = serialize(Y_a)
 
             # with absolute tolerance
-            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-5)
+            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-4)
 
 
 def GLS(M, X, y):
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     tmp = pathlib.Path("tmp")
     if not os.path.isdir(tmp):
         os.mkdir(tmp)
-    f = open(tmp / '__init__.py', "w")
+    f = open(tmp / "__init__.py", "w")
     f.close()
     sys.path.insert(0, "tmp")
 

@@ -1,3 +1,0 @@
-- Add all required functionality
-- Add tests
-- Publish package
