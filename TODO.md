@@ -2,9 +2,8 @@
 
 ## Compiler
 - urgent:
-    - inv_table
+    - inv_table (still required?)
 - low priority:
-    - zeros_like (a bit shorter)
     - import numpy as np (parse from source?)
     - revert back to np.dot (can also handle scalars)
 - outlook: secondary pass over AST 

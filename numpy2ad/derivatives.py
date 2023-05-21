@@ -88,15 +88,18 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
 
     match func:
         case "inv":  # numpy.linalg.inv
+            assert call.func.value.attr == "linalg"
             # B = A^-1 -> A_a += -A^-T @ B_a @ A^-T
-            A_inv_T = deepcopy(call)
-            A_inv_T = ast.Attribute(attr="T", ctx=ast.Load(), value=A_inv_T)
-            placeholder = ast.Name(id="", ctx=ast.Load())
-            right = ast.BinOp(op=ast.MatMult(), left=placeholder, right=A_inv_T)
+            A_inv = ast.Name(id="A_inv", ctx=ast.Load())
+            A_inv_T = ast.Attribute(attr="T", ctx=ast.Load(), value=A_inv)
+            B_a = ast.Name(id="B_a", ctx=ast.Load())
+            binop_right = ast.BinOp(op=ast.MatMult(), left=B_a, right=A_inv_T)
             return ast.Expr(
                 value=ast.UnaryOp(
                     op=ast.USub(),
-                    operand=ast.BinOp(op=ast.MatMult(), left=A_inv_T, right=right),
+                    operand=ast.BinOp(
+                        op=ast.MatMult(), left=A_inv_T, right=binop_right
+                    ),
                 )
             )
         case "exp":

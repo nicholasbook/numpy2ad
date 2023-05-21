@@ -38,10 +38,10 @@ class AdjointTransformer(ast.NodeTransformer):
     def _make_call(self, func: ast.Attribute, args: list[ast.Attribute]) -> ast.Call:
         return ast.Call(func=func, args=args, keywords=[])
 
-    def _numpy_zeros(self, var: str) -> str:
+    def _numpy_zeros(self, var: ast.Name) -> str:
         return self._make_call(
-            func=self._make_attribute(var="numpy", attr="zeros"),
-            args=[self._make_attribute(var=var, attr="shape")],
+            func=self._make_attribute(var="numpy", attr="zeros_like"),
+            args=[self._make_ctx_load(var)],
         )  # this does not work for scalars !! # TODO: use np.zeros_like
 
     def _make_ctx_load(self, node: ast.Name) -> ast.Name:
@@ -131,10 +131,8 @@ class AdjointTransformer(ast.NodeTransformer):
         self.var_table[new_v.id] = new_v.id
 
         # initialize adjoint of new v_i
-        value = self._make_call(
-            func=self._make_attribute(var="numpy", attr="zeros"),
-            args=[self._make_attribute(var=new_v.id, attr="shape")],
-        )
+        value = self._numpy_zeros(new_v)
+
         new_v_a = (
             self._make_ad_target(new_v)
             if target is not None
@@ -190,33 +188,42 @@ class AdjointTransformer(ast.NodeTransformer):
             )  # could simply be a Name or possibly nested BinOp
 
             # ensure arg_v is loaded
-            if type(arg_v.ctx) is ast.Store:
+            if isinstance(arg_v.ctx, ast.Store):
                 node.args[i] = self._make_ctx_load(arg_v)
             else:
                 node.args[i] = arg_v  # replace the argument names
 
         # SAC for lhs
-        # TODO: use return_target if not None (skip init)
-        new_v = self._generate_SAC(node)
+        new_v: ast.Name = self._generate_SAC(node)
+        init = True
+        if self.return_target is not None:
+            new_v.id = "out"
+            init = False
 
         # initialize adjoint of lhs
         new_v_a = self._generate_ad_SAC(
-            self._numpy_zeros(new_v.id), self._make_ad_target(new_v), True
+            self._numpy_zeros(new_v), self._make_ad_target(new_v), init
         )
 
         # adjoints of args (already initialized)
         for i in range(len(node.args)):
-            if type(node.args[i]) is ast.Name:
+            if isinstance(node.args[i], ast.Name):
                 d = derivative_Call(node, i).value
-                if node.func.attr == "inv":  # special case (insert B_a)
+
+                if node.func.value.attr == "linalg" and node.func.attr == "inv":
+                    # e.g. v = np.linalg.inv(A) -> A_a -= v.T @ v_a @ v
+                    assert len(node.args) == 1
+
                     d: ast.UnaryOp
-                    d.operand.right.left.id = new_v_a.id
+                    d.operand.left.value.id = new_v.id  # insert v
+                    d.operand.right.left.id = new_v_a.id  # insert v_a
+                    d.operand.right.right.id = new_v.id
+
                     self._generate_ad_SAC(
                         rhs=d,
                         target=self._make_ad_target(node.args[i]),
                         init_mode=False,
                     )
-                    # TODO: v = np.linalg.inv(A) -> store 'A_inv' : 'v' in inv_table
                 elif d is not None:
                     prod = ast.BinOp(
                         op=ast.Mult(), left=d, right=self._make_ctx_load(new_v_a)
@@ -249,7 +256,7 @@ class AdjointTransformer(ast.NodeTransformer):
         # generate and initialize adjoint
         # v0 = A, v1 = -A -> v1 = -v0 -> v0_a = A_a, v1_a = 0, v0_a += -v1_a
         new_v_a = self._generate_ad_SAC(
-            self._numpy_zeros(new_v.id), self._make_ad_target(new_v), True
+            self._numpy_zeros(new_v), self._make_ad_target(new_v), True
         )
         new_v_a_c = copy(new_v_a)
         new_v_a_c.ctx = ast.Load()
