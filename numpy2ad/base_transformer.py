@@ -14,8 +14,10 @@ class AdjointTransformer(ast.NodeTransformer):
     reverse_stack: list = None  # adjoint code
     reverse_init_list: list = None  # adjoint initialization code
 
-    binop_depth: int = 0  # recursion counter
-    return_target = None
+    binop_depth: int = 0  # nested BinOps counter
+    call_depth = 0  # nested Calls counter
+    assign_target = None  # target of ast.Assign
+    return_target = None  # target of ast.Return
 
     def __init__(self) -> None:
         self.var_table = dict()
@@ -40,13 +42,18 @@ class AdjointTransformer(ast.NodeTransformer):
 
     def _numpy_zeros(self, var: ast.Name) -> str:
         return self._make_call(
-            func=self._make_attribute(var="numpy", attr="zeros_like"),
+            func=self._make_attribute(var="np", attr="zeros_like"),
             args=[self._make_ctx_load(var)],
         )  # this does not work for scalars !! # TODO: use np.zeros_like
 
     def _make_ctx_load(self, node: ast.Name) -> ast.Name:
         new_node = copy(node)
         new_node.ctx = ast.Load()
+        return new_node
+
+    def _make_ctx_store(self, node: ast.Name) -> ast.Name:
+        new_node = copy(node)
+        new_node.ctx = ast.Store()
         return new_node
 
     def _make_ad_target(self, node: ast.Name) -> ast.Name:
@@ -64,10 +71,16 @@ class AdjointTransformer(ast.NodeTransformer):
         new_node = ast.Assign(targets=[new_v], value=rhs)
         if hasattr(rhs, "id"):  # not the case for ast.Constant
             self.var_table[rhs.id] = new_v.id
-        self.primal_stack.insert(self.counter, new_node)
+        self.primal_stack.append(new_node)
 
         self.counter += 1
         return new_v
+
+    def _generate_custom_SAC(self, lhs: ast.Name, rhs: ast) -> None:
+        new_sac = ast.Assign(
+            targets=[self._make_ctx_store(lhs)], value=self._make_ctx_store(rhs)
+        )
+        self.primal_stack.append(new_sac)
 
     def _generate_ad_SAC(self, rhs, target: ast.Name, init_mode: bool) -> ast.Name:
         """
@@ -98,13 +111,21 @@ class AdjointTransformer(ast.NodeTransformer):
 
         return target
 
+    def _recursive_BinOP(self, node: ast.BinOp):
+        # visit children recursively to handle nested expressions
+        self.binop_depth += 1
+        node.left = self.visit(node.left)  # e.g. A @ B -> v3
+        node.right = self.visit(node.right)  # e.g. C -> v2
+        self.binop_depth -= 1
+        return self.visit(node)  # recursion
+
     def _make_BinOp_SAC_AD(
         self, binop_node: ast.BinOp, target: ast.Name = None
     ) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable.
 
         Args:
-            binop_node (ast.BinOp): the binary operation
+            binop_node (ast.BinOp): the binary operation\n
             target (ast.Name): target node for SAC. If not specified, v{counter} is used.
         """
         operator, swap = (
@@ -127,7 +148,7 @@ class AdjointTransformer(ast.NodeTransformer):
             targets=[new_v],
             value=ast.BinOp(left=left_v, op=binop_node.op, right=right_v),
         )  # e.g. v3 = v0 @ v1
-        self.primal_stack.insert(self.counter, new_node)  # insert SAC
+        self.primal_stack.append(new_node)  # insert SAC
         self.var_table[new_v.id] = new_v.id
 
         # initialize adjoint of new v_i
@@ -166,11 +187,13 @@ class AdjointTransformer(ast.NodeTransformer):
         r_deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
         self._generate_ad_SAC(__make_rhs(r_deriv), self._make_ad_target(right_v), False)
 
-        self.counter += 1
+        if target is None:
+            self.counter += 1
         return new_v
 
     def visit_Constant(self, node: ast.Constant) -> ast.Name:
         """generates SAC for constant assignment and returns the newly assigned v_i"""
+        # TODO: keep BinOps like '2 * A' as is
         if isinstance(node.value, str):
             return node  # docstring is removed
         new_v = self._generate_SAC(node)
@@ -179,51 +202,38 @@ class AdjointTransformer(ast.NodeTransformer):
         )
         return new_v
 
-    def visit_Call(self, node: ast.Call) -> ast.Name:
-        """replaces the arguments of a function call, generates SAC, and returns the newly assigned v_i"""
-        # TODO: use list comprehension
+    def _visit_Call_args(self, node: ast.Call) -> None:
+        # TODO: use list comprehension ?
         for i in range(len(node.args)):
             arg_v = self.visit(
                 node.args[i]
-            )  # could simply be a Name or possibly nested BinOp
+            )  # could simply be a Name or possibly nested BinOp, Call, ...
 
-            # ensure arg_v is loaded
-            if isinstance(arg_v.ctx, ast.Store):
-                node.args[i] = self._make_ctx_load(arg_v)
-            else:
-                node.args[i] = arg_v  # replace the argument names
+            node.args[i] = self._make_ctx_load(arg_v)  # replace the argument names
 
-        # SAC for lhs
-        new_v: ast.Name = self._generate_SAC(node)
-        init = True
-        if self.return_target is not None:
-            new_v.id = "out"
-            init = False
-
-        # initialize adjoint of lhs
-        new_v_a = self._generate_ad_SAC(
-            self._numpy_zeros(new_v), self._make_ad_target(new_v), init
-        )
-
+    def _generate_Call_args_ad_SAC(
+        self, node: ast.Call, new_v: ast.Name, new_v_a: ast.Name
+    ) -> None:
         # adjoints of args (already initialized)
         for i in range(len(node.args)):
             if isinstance(node.args[i], ast.Name):
                 d = derivative_Call(node, i).value
 
-                if node.func.value.attr == "linalg" and node.func.attr == "inv":
-                    # e.g. v = np.linalg.inv(A) -> A_a -= v.T @ v_a @ v
-                    assert len(node.args) == 1
+                if isinstance(node.func.value, ast.Attribute):
+                    if node.func.value.attr == "linalg" and node.func.attr == "inv":
+                        # e.g. v = np.linalg.inv(A) -> A_a -= v.T @ v_a @ v
+                        assert len(node.args) == 1
 
-                    d: ast.UnaryOp
-                    d.operand.left.value.id = new_v.id  # insert v
-                    d.operand.right.left.id = new_v_a.id  # insert v_a
-                    d.operand.right.right.id = new_v.id
+                        d: ast.UnaryOp
+                        d.operand.left.value.id = new_v.id  # insert v
+                        d.operand.right.left.id = new_v_a.id  # insert v_a
+                        d.operand.right.right.id = new_v.id
 
-                    self._generate_ad_SAC(
-                        rhs=d,
-                        target=self._make_ad_target(node.args[i]),
-                        init_mode=False,
-                    )
+                        self._generate_ad_SAC(
+                            rhs=d,
+                            target=self._make_ad_target(node.args[i]),
+                            init_mode=False,
+                        )
                 elif d is not None:
                     prod = ast.BinOp(
                         op=ast.Mult(), left=d, right=self._make_ctx_load(new_v_a)
@@ -233,6 +243,35 @@ class AdjointTransformer(ast.NodeTransformer):
                         target=self._make_ad_target(node.args[i]),
                         init_mode=False,
                     )
+
+    def visit_Call(self, node: ast.Call) -> ast.Name:
+        """replaces the arguments of a function call, generates SAC, and returns the newly assigned v_i"""
+        self.call_depth += 1
+        self._visit_Call_args(node)
+        self.call_depth -= 1
+
+        # make (AD) SAC with special cases for assign targets
+        new_v: ast.Name
+        new_v_a: ast.Name
+        if (
+            self.assign_target is not None
+            and self.call_depth == 0
+            and self.binop_depth == 0
+        ):  # e.g. B = A + np.linalg.inv(C) -> v0 = np.linalg.inv(C); B = A + v0
+            new_v = self.assign_target
+            self.primal_stack.append(ast.Assign(targets=[new_v], value=node))
+            new_v_a = self._generate_ad_SAC(
+                self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+            )
+            self.assign_target = None
+
+        else:  # default (nested Call)
+            new_v = self._generate_SAC(node)
+            new_v_a = self._generate_ad_SAC(
+                self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+            )
+
+        self._generate_Call_args_ad_SAC(node, new_v, new_v_a)
 
         return new_v
 
@@ -289,12 +328,21 @@ class AdjointTransformer(ast.NodeTransformer):
         # replace with v_i node and save old name in dict
         assert len(node.targets) == 1
 
-        # generate SAC for r.h.s recursively
-        new_v = self.visit(node.value)
-        # remember v_i
-        self.var_table[node.targets[0].id] = new_v.id
+        # we want to preserve simple assignments e.g. C = A + B
+        # also in the case of nested rhs e.g. D = A @ B + C -> v0 = A @ B; D = v0 + C
+        # this requires custom logic to keep certain variable names unchanged
+        # in general BinOps / Calls generate their own (AD) SAC (context-free)
+        # so we pass 'D' to the top level rhs expression as 'assign_target'
 
-        return None  # old assignment is removed
+        self.assign_target = copy(node.targets[0])
+
+        # TODO: check for simple assignment e.g. B = A
+        # generate SAC for r.h.s (e.g. BinOp, Call, ...) recursively
+        new_v = self.visit(node.value)
+
+        self.assign_target = None  # reset
+
+        return None  # the original assignment is removed
 
     def visit_AugAssign(self, node: ast.AugAssign):
         # overwriting of variables must be dealt with

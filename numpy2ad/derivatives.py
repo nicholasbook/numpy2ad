@@ -129,7 +129,7 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
             mult.attr = "multiply"
             return ast.Expr(
                 value=ast.Call(
-                    func=mult, args=[ast.Constant(value=2.0), call.args[0]], keywords=[]
+                    func=mult, args=[call.args[0], ast.Constant(value=2.0)], keywords=[]
                 )
             )
         case "ones":

@@ -1,5 +1,5 @@
 import ast
-
+from copy import copy
 from .derivatives import *
 from .base_transformer import AdjointTransformer
 
@@ -25,37 +25,20 @@ class ExpressionTransformer(AdjointTransformer):
         Returns:
             ast.Name: the transformed node
         """
+
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
+
+            # preserve name of target for top-level assignments
             new_node = self._make_BinOp_SAC_AD(
-                node, self.return_target if self.binop_depth == 0 else None
+                node,
+                self.assign_target
+                if (self.binop_depth == 0 and self.call_depth == 0)
+                else None,
             )
             return new_node
         else:
-            self.binop_depth += (
-                1  # count recursion depth to leave left-hand side unchanged
-            )
-            # visit children recursively to handle nested expressions
-            node.left = self.visit(node.left)  # e.g. A @ B -> v3
-            node.right = self.visit(node.right)  # e.g. C -> v2
-            self.binop_depth -= 1
-            return self.visit(node)  # recursion
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        """generates SAC for an arbitrary assignment in function body"""
-        # variable was assigned a possibly nested expression
-        # replace with v_i node and save old name in dict
-
-        # for expression mode, this is the entry point.
-        self.return_target = node.targets[0]  # TODO: fix for Call
-
-        new_v = self.visit(node.value)
-        # remember v_i
-        self.var_table[self.return_target.id] = new_v.id
-
-        self.return_target = None
-
-        return None  # old assignment is removed
+            return super()._recursive_BinOP(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         # variable was incremented by some possibly nested expression

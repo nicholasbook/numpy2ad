@@ -1,4 +1,3 @@
-import numpy
 import numpy as np
 from numpy2ad import transform
 import pytest
@@ -123,7 +122,7 @@ def test_quadric(tmp_pkg):
 
 
 def inverse(A):
-    return numpy.linalg.inv(A)
+    return np.linalg.inv(A)
 
 
 def test_inverse(tmp_pkg):
@@ -161,8 +160,8 @@ def test_inverse(tmp_pkg):
 
 
 def GLS(M, X, y):
-    M_inv = numpy.linalg.inv(M)
-    return numpy.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y
+    M_inv = np.linalg.inv(M)
+    return np.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y
 
 
 def test_GLS():

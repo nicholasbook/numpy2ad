@@ -4,6 +4,8 @@ from inspect import getsource
 from typing import Callable, Union
 from .derivatives import *
 from .base_transformer import AdjointTransformer
+from copy import copy
+from textwrap import dedent
 
 # TODO:
 # - factor out as much as possible
@@ -22,6 +24,7 @@ class FunctionTransformer(AdjointTransformer):
 
     functionDef: ast.FunctionDef = None
     return_list: list[ast.Name] = None  # list of values to return
+    out_id = "out"
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,19 +41,65 @@ class FunctionTransformer(AdjointTransformer):
         """
         if isinstance(node.left, ast.Name) and isinstance(node.right, ast.Name):
             # end of recursion:  v_i = A + B
-            return self._make_BinOp_SAC_AD(
-                node,
-                self._make_ctx_load(ast.Name(id="out"))
-                if self.binop_depth == 0 and isinstance(self.return_target, ast.BinOp)
-                else None,
-            )
+            # TODO: or ast.Attribute? e.g. A.T + B
+            # TODO: ast.Constant is also okay e.g. 2 * A
+
+            target = None
+            if self.binop_depth == 0 and self.call_depth == 0:
+                if self.return_target is not None and isinstance(
+                    self.return_target, ast.BinOp
+                ):
+                    # returning a BinOP -> use out
+                    assert self.assign_target is None
+                    target = self._make_ctx_load(ast.Name(id=self.out_id))
+                elif self.assign_target is not None:
+                    # assigning a BinOp -> use return_target
+                    assert self.return_target is None
+                    target = self.assign_target
+
+            return self._make_BinOp_SAC_AD(node, target)
         else:
-            # visit children recursively to handle nested expressions
-            self.binop_depth += 1
-            node.left = self.visit(node.left)  # e.g. A @ B -> v3
-            node.right = self.visit(node.right)  # e.g. C -> v2
-            self.binop_depth -= 1
-            return self.visit(node)  # recursion
+            return super()._recursive_BinOP(node)
+
+    def visit_Call(self, node: ast.Call):
+        # (recursively) visit arguments
+        self.call_depth += 1
+        super()._visit_Call_args(node)
+        self.call_depth -= 1
+
+        # make (AD) SAC with special cases for assign and return targets
+        new_v: ast.Name
+        new_v_a: ast.Name
+        if (
+            self.assign_target is not None
+            and self.call_depth == 0
+            and self.binop_depth == 0
+        ):  # e.g. B = A + np.linalg.inv(C) -> v0 = np.linalg.inv(C); B = A + v0
+            assert self.return_target is None
+            new_v = self.assign_target
+            self.primal_stack.append(ast.Assign(targets=[new_v], value=node))
+            new_v_a = self._generate_ad_SAC(
+                self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+            )
+            self.assign_target = None
+
+        elif self.return_target is not None and isinstance(
+            self.return_target, ast.Call
+        ):  # e.g. return np.linalg.inv(A)
+            assert self.assign_target is None
+            new_v = ast.Name(id=self.out_id, ctx=ast.Store())
+            new_v_a = self._make_ad_target(new_v)  # out_a is given as input
+            self._generate_custom_SAC(lhs=new_v, rhs=node)
+
+        else:  # default (nested Call)
+            new_v = self._generate_SAC(node)
+            new_v_a = self._generate_ad_SAC(
+                self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+            )
+
+        super()._generate_Call_args_ad_SAC(node, new_v, new_v_a)
+
+        return new_v
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.Name:
         """
@@ -106,15 +155,19 @@ class FunctionTransformer(AdjointTransformer):
         """generates SAC for expression that is returned and replaces it with
         a return of a tuple of primal results and adjoints of function arguments (derivatives)
         """
-        # self.final_assign = True
-        self.return_target = node.value
+        self.return_target = copy(node.value)
+        if isinstance(node.value, ast.Name):
+            self.out_id = self.return_target.id
+
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
-        final_v.id = "out"
+        assert final_v.id == self.out_id
 
         # assumes that there is only one output
         self.return_list.insert(0, final_v)
 
-        self.functionDef.args.args.append(ast.arg(arg="out_a"))
+        out_a_arg = ast.arg(arg=f"{self.out_id}_a")
+        if out_a_arg.arg not in [arg.arg for arg in self.functionDef.args.args]:
+            self.functionDef.args.args.append(out_a_arg)
 
         return_list = [ast.Name(id=arg.id, ctx=ast.Load()) for arg in self.return_list]
 
@@ -135,10 +188,10 @@ class FunctionTransformer(AdjointTransformer):
             ast.Module: the transformed node
         """
         new_node = self.generic_visit(node)
-        # insert "import numpy"
+        # insert "import numpy as np"
         new_node.body.insert(
-            0, ast.Import(names=[ast.alias(name="numpy")])
-        )  # 'as np' ?
+            0, ast.Import(names=[ast.alias(name="numpy", asname="np")])
+        )
         return new_node
 
 
@@ -153,12 +206,14 @@ def transform(func: Union[Callable, str], output_file: str = None) -> str:
     """
     transformer = FunctionTransformer()
     tree = (
-        ast.parse(getsource(func)) if isinstance(func, Callable) else ast.parse(func)
-    )  # does not seem to work for indended code
+        ast.parse(dedent(getsource(func)))
+        if isinstance(func, Callable)
+        else ast.parse(func)
+    )
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)
     new_code = ast.unparse(newAST)
-    if output_file is not None:  # TODO: create __init__.py in target directory
+    if output_file is not None:  # TODO: create __init__.py in target directory?
         file = open(output_file, "w")
         file.write(new_code)
         file.close()
