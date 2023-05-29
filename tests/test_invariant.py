@@ -127,7 +127,7 @@ def inverse(A):
 
 def test_inverse(tmp_pkg):
     dims = (10, 10)
-    A = np.random.rand(*dims)
+    A = np.random.rand(*dims) + 1e-3
 
     transform(inverse, pathlib.Path(tmp_pkg) / "out3.py")
     from out3 import inverse_ad
@@ -156,7 +156,7 @@ def test_inverse(tmp_pkg):
             Y_A = serialize(Y_a)
 
             # with absolute tolerance
-            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-4)
+            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-5)
 
 
 def GLS(M, X, y):
@@ -169,11 +169,57 @@ def test_GLS():
     pass
 
 
+def inv_scale(A, k):
+    scale = 1.0 / k
+    return scale * A  # element-wise
+
+
+def test_inv_scale(tmp_pkg):
+    dims = (5, 5)
+    A = np.random.rand(*dims)
+    k = np.random.rand(*dims) + 1e-4
+
+    transform(inv_scale, pathlib.Path(tmp_pkg) / "out_inv_scale.py")
+    from out_inv_scale import inv_scale_ad
+
+    num_tests = 25
+    for _ in range(num_tests):
+        # seed random entry in out_a
+        m = np.random.randint(0, dims[0] - 1)
+        n = np.random.randint(0, dims[1] - 1)
+        out_a = np.zeros(dims)
+        out_a[m, n] = 1.0
+
+        # adjoint model
+        A_a = np.zeros_like(A)
+        k_a = np.zeros_like(k)
+        _, A_a, k_a = inv_scale_ad(A, k, A_a, k_a, out_a)
+
+        for wrt, x in enumerate([A, k]):
+            for i in range(x.size):
+                # seed tangent for i-th entry
+                x_t = np.zeros_like(x)
+                x_t.flat[i] = 1.0
+
+                X = [np.zeros_like(A), np.zeros_like(k)]  # TODO: generalize
+                X[wrt] = x_t
+                X_T = serialize(*X)
+                Y_T = serialize(
+                    central_finite_diff(
+                        inv_scale, A, k, wrt=wrt, index=np.unravel_index(i, dims)
+                    )
+                )
+                X_A = serialize(A_a, k_a)
+                Y_A = serialize(out_a)
+
+                assert X_A @ X_T == approx(Y_A @ Y_T)
+
+
 if __name__ == "__main__":
     # create tmp directory
     tmp = pathlib.Path("tmp")
-    if not os.path.isdir(tmp):
-        os.mkdir(tmp)
+    if not tmp.exists():
+        tmp.mkdir()
     f = open(tmp / "__init__.py", "w")
     f.close()
     sys.path.insert(0, "tmp")
@@ -182,6 +228,7 @@ if __name__ == "__main__":
     test_quadric(tmp)
     test_inverse(tmp)
     test_GLS()
+    test_inv_scale(tmp)
 
-    if os.path.isdir(tmp):
+    if tmp.exists():
         shutil.rmtree(tmp)

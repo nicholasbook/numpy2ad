@@ -126,6 +126,7 @@ def test_return_nested_binop():
         C = A + B
         v0 = B @ C
         out = A @ v0
+        C_a = np.zeros_like(C)
         v0_a = np.zeros_like(v0)
         v0_a += A.T @ out_a
         A_a += out_a @ v0.T

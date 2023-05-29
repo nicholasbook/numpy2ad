@@ -4,3 +4,4 @@ __pycache__
 *.egg-info
 tmp/
 .vscode
+demo/example_problems.html

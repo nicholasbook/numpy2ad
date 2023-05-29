@@ -155,9 +155,10 @@ class FunctionTransformer(AdjointTransformer):
         """generates SAC for expression that is returned and replaces it with
         a return of a tuple of primal results and adjoints of function arguments (derivatives)
         """
-        self.return_target = copy(node.value)
-        if isinstance(node.value, ast.Name):
-            self.out_id = self.return_target.id
+        if self.return_target is None:
+            self.return_target = copy(node.value)
+            if isinstance(node.value, ast.Name):
+                self.out_id = self.return_target.id
 
         final_v = self.visit(node.value)  # i.e. BinOp, Call, ...
         assert final_v.id == self.out_id
@@ -187,7 +188,19 @@ class FunctionTransformer(AdjointTransformer):
         Returns:
             ast.Module: the transformed node
         """
+        # check return value
+        if not isinstance(node.body[0], ast.FunctionDef):
+            raise ValueError("first line of input must be function definition")
+
+        last_line = node.body[0].body[-1]
+        if not isinstance(last_line, ast.Return):
+            raise ValueError("return statement must be last line of function")
+        if isinstance(last_line.value, ast.Name):
+            # self.return_target = last_line.value
+            self.out_id = last_line.value.id
+
         new_node = self.generic_visit(node)
+
         # insert "import numpy as np"
         new_node.body.insert(
             0, ast.Import(names=[ast.alias(name="numpy", asname="np")])

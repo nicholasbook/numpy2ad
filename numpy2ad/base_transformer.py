@@ -151,14 +151,18 @@ class AdjointTransformer(ast.NodeTransformer):
         self.primal_stack.append(new_node)  # insert SAC
         self.var_table[new_v.id] = new_v.id
 
-        # initialize adjoint of new v_i
-        value = self._numpy_zeros(new_v)
-
-        new_v_a = (
-            self._make_ad_target(new_v)
-            if target is not None
-            else self._generate_ad_SAC(value, self._make_ad_target(new_v), True)
-        )
+        # adjoint
+        new_v_a = self._make_ad_target(new_v)
+        if target is not None:
+            if hasattr(self, "out_id"):
+                if (
+                    not target.id == self.out_id
+                ):  # initialize special target only if it is not the output
+                    self._generate_ad_SAC(self._numpy_zeros(new_v), new_v_a, True)
+            else:
+                pass  # do not initialize (expression mode)
+        else:  # default
+            self._generate_ad_SAC(self._numpy_zeros(new_v), new_v_a, True)
 
         # generate derivative of BinOp: left_a/right_a += f' lhs_a
         new_v_a_c = self._make_ctx_load(new_v_a)
@@ -185,7 +189,10 @@ class AdjointTransformer(ast.NodeTransformer):
 
         # rhs of BinOp
         r_deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
-        self._generate_ad_SAC(__make_rhs(r_deriv), self._make_ad_target(right_v), False)
+        if r_deriv is not None:
+            self._generate_ad_SAC(
+                __make_rhs(r_deriv), self._make_ad_target(right_v), False
+            )
 
         if target is None:
             self.counter += 1
