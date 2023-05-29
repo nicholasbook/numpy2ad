@@ -86,19 +86,21 @@ def warm_up_the_jit():
 
 
 if __name__ == "__main__":
-    num_rows = [32, 64, 128, 256, 512, 1024, 2048, 4096]  # , 8192] # ~ 6 min for 4096
+    num_rows = [32, 64, 128, 256, 512, 1024, 2048, 4096]  # ~ 6 min for 4096
+    export_array = np.zeros(shape=(len(num_rows), 5))
 
     # generate GLS_ad
     exec(compile(transform(GLS), filename="<ast>", mode="exec"))
 
     warm_up_the_jit()
 
-    for row in num_rows:
+    average_over = 10
+    for i, row in enumerate(num_rows):
         gls_result = timeit.timeit(
             "benchmark_gls(row, GLS)",
             setup="from __main__ import benchmark_gls, GLS",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(f"Forward pass with {row} rows took {gls_result} seconds.")
 
@@ -107,7 +109,7 @@ if __name__ == "__main__":
             "benchmark_gls(row, GLS_jit)",
             setup="from __main__ import benchmark_gls, GLS_jit",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(
             f"[Numba JIT] Forward pass with {row} rows took {gls_jit_result} seconds."
@@ -118,7 +120,7 @@ if __name__ == "__main__":
             "benchmark_gls_ad(row, GLS_ad)",
             setup="from __main__ import benchmark_gls_ad",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(f"Forward and reverse pass with {row} rows took {gls_ad_result} seconds.")
 
@@ -126,10 +128,19 @@ if __name__ == "__main__":
             "benchmark_gls_ad(row, GLS_ad_jit)",
             setup="from __main__ import benchmark_gls_ad, GLS_ad_jit",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(
             f"[Numba JIT] Forward and reverse pass with {row} rows took {gls_ad_jit_result} seconds.\n"
         )
+        export_array[i, :] = [
+            row,
+            gls_result / average_over,
+            gls_jit_result / average_over,
+            gls_ad_result / average_over,
+            gls_ad_jit_result / average_over,
+        ]
+
+    np.savetxt("timeit_gls.txt", export_array)
 
     # TODO: plots

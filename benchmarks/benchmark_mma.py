@@ -63,19 +63,21 @@ def warm_up_the_jit():
 
 
 if __name__ == "__main__":
-    num_rows = [32, 64, 128, 256, 512, 1024, 2048]  # , 4096]
+    num_rows = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+    export_array = np.zeros(shape=(len(num_rows), 5))
 
     # generate MMA_ad
     exec(compile(transform(MMA), filename="<ast>", mode="exec"))
 
     warm_up_the_jit()
 
-    for row in num_rows:
+    average_over = 10
+    for i, row in enumerate(num_rows):
         mma_result = timeit.timeit(
             "benchmark_mma(row, MMA)",
             setup="from __main__ import benchmark_mma, MMA",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(f"Forward pass with {row} rows took {mma_result} seconds.")
 
@@ -84,7 +86,7 @@ if __name__ == "__main__":
             "benchmark_mma(row, MMA_jit)",
             setup="from __main__ import benchmark_mma, MMA_jit",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(
             f"[Numba JIT] Forward pass with {row} rows took {mma_jit_result} seconds."
@@ -95,7 +97,7 @@ if __name__ == "__main__":
             "benchmark_mma_ad(row, MMA_ad)",
             setup="from __main__ import benchmark_mma_ad",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(f"Forward and reverse pass with {row} rows took {mma_ad_result} seconds.")
 
@@ -103,10 +105,19 @@ if __name__ == "__main__":
             "benchmark_mma_ad(row, MMA_ad_jit)",
             setup="from __main__ import benchmark_mma_ad, MMA_ad_jit",
             globals=locals(),
-            number=20,
+            number=average_over,
         )
         print(
             f"[Numba JIT] Forward and reverse pass with {row} rows took {mma_ad_jit_result} seconds.\n"
         )
+        export_array[i, :] = [
+            row,
+            mma_result / average_over,
+            mma_jit_result / average_over,
+            mma_ad_result / average_over,
+            mma_ad_jit_result / average_over,
+        ]
+
+    np.savetxt("timeit_mma.txt", export_array)
 
     # TODO: plots
