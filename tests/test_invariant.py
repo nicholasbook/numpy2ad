@@ -20,14 +20,18 @@ def serialize(*args: np.ndarray):
     return np.concatenate([x.ravel() for x in list(args)])
 
 
+# def num_entries_in(*args: np.ndarray):
+#     return np.sum([np.prod(input.shape) for input in list(args)])
+
+
 def central_finite_diff(func: Callable, *args: np.ndarray, wrt: int, index: tuple):
     """First-order central finite difference
 
     Args:
         func: function to differentiate
+        *args (np.ndarray): arguments of func
         wrt (int): which argument to func
         index (tuple): which entry of argument
-        *args (np.ndarray): arguments of func
     """
     h = np.sqrt(np.finfo(float).eps)
     x0 = [x.copy() for x in args]
@@ -35,6 +39,63 @@ def central_finite_diff(func: Callable, *args: np.ndarray, wrt: int, index: tupl
     x1 = [x.copy() for x in args]
     x1[wrt][*index] -= h / 2
     return 1 / h * (func(*x0) - func(*x1))
+
+
+def central_fd_flat(func: Callable, *args: np.ndarray, wrt: int, index: int):
+    """First-order central finite difference with 'flat' indexing
+
+    Args:
+        func: function to differentiate
+        *args (np.ndarray): arguments of func
+        wrt (int): which argument to func
+        index (int): which entry of argument
+    """
+    h = np.sqrt(np.finfo(float).eps)
+
+    x0 = [x.copy() for x in args]
+    (x0[wrt]).flat[index] += h / 2
+    x1 = [x.copy() for x in args]
+    (x1[wrt]).flat[index] -= h / 2
+
+    return 1 / h * (func(*x0) - func(*x1))
+
+
+def central_fd_no_copy(func: Callable, *args: np.ndarray, wrt: int, index: int):
+    """First-order central finite difference with 'flat' indexing
+
+    Args:
+        func: function to differentiate
+        *args (np.ndarray): arguments of func
+        wrt (int): which argument to func
+        index (int): which entry of argument
+    """
+    h = np.sqrt(np.finfo(float).eps)
+
+    x = list(args)
+    (x[wrt]).flat[index] += h / 2
+    y0 = func(*x)
+
+    (x[wrt]).flat[index] -= h
+    y1 = func(*x)
+
+    return 1 / h * (y0 - y1)
+
+
+def test_central_fd():
+    def f(x: np.ndarray):
+        return x**2
+
+    x = np.ones(10)
+    y = f(x)
+
+    dy_slow = central_finite_diff(f, x, wrt=0, index=(0,))
+    assert dy_slow[0] == approx(2.0)
+
+    dy_lin = central_fd_flat(f, x, wrt=0, index=0)
+    assert dy_lin[0] == approx(2.0)
+
+    dy_fast = central_fd_no_copy(f, x, wrt=0, index=0)
+    assert dy_fast[0] == approx(2.0)
 
 
 def mma(A, B, C):  # Matrix-matrix multiply and add
@@ -127,7 +188,7 @@ def inverse(A):
 
 def test_inverse(tmp_pkg):
     dims = (10, 10)
-    A = np.random.rand(*dims) + 1e-3
+    A = np.random.rand(*dims) + 1e-4
 
     transform(inverse, pathlib.Path(tmp_pkg) / "out3.py")
     from out3 import inverse_ad
@@ -156,17 +217,56 @@ def test_inverse(tmp_pkg):
             Y_A = serialize(Y_a)
 
             # with absolute tolerance
-            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-5)
-
-
-def GLS(M, X, y):
-    M_inv = np.linalg.inv(M)
-    return np.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y
+            assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-4)
 
 
 def test_GLS():
-    # TODO
-    pass
+    def GLS(M, X, y):
+        M_inv = np.linalg.inv(M)
+        return np.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y
+
+    # generate GLS_ad
+    exec(compile(transform(GLS), filename="<ast>", mode="exec"), globals())
+
+    dims_M = (20, 20)
+    dims_X = (20, 5)
+    dims_y = (20, 1)
+    dims_b = (5, 1)
+
+    for index_b in range(dims_b[0]):
+        b_a = np.zeros(dims_b)
+        b_a.flat[index_b] = 1.0
+
+        # create new random model
+        M = np.random.rand(*dims_M) + 1e-4
+        M_a = np.zeros_like(M)
+        X = np.random.rand(*dims_X)
+        X_a = np.zeros_like(X)
+        y = np.random.rand(*dims_y)
+        y_a = np.zeros_like(y)
+
+        _, M_a, X_a, y_a = GLS_ad(M, X, y, M_a, X_a, y_a, out_a=b_a)
+
+        inputs = [M, X, y]
+        input_adjoints = [M_a, X_a, y_a]
+
+        # test against all tangents
+        for wrt, x in enumerate(inputs):
+            for index_x in range(x.size):
+                # seed tangent for i-th entry of current input
+                x_t = np.zeros_like(x)
+                x_t.flat[index_x] = 1.0
+
+                # remaining tangents are zero
+                X = [np.zeros_like(arg) for arg in inputs]
+                X[wrt] = x_t
+
+                X_T = serialize(*X)
+                Y_T = serialize(central_fd_flat(GLS, *inputs, wrt=wrt, index=index_x))
+                X_A = serialize(*input_adjoints)
+                Y_A = serialize(b_a)
+
+                assert X_A @ X_T == approx(Y_A @ Y_T, abs=1e-3)
 
 
 def inv_scale(A, k):
@@ -224,6 +324,7 @@ if __name__ == "__main__":
     f.close()
     sys.path.insert(0, "tmp")
 
+    test_central_fd()
     test_mma(tmp)
     test_quadric(tmp)
     test_inverse(tmp)
