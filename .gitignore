@@ -9,3 +9,4 @@ benchmarks/benchmarks.md
 benchmarks/benchmarks.pdf
 benchmarks/timeit_gls.txt
 benchmarks/timeit_mma.txt
+env/

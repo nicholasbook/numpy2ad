@@ -27,7 +27,7 @@ Numpy2AD offers two modes of code transformation.
     def mma(A, B, C):
         return A @ B + C
     ```
-    is transformed to
+    is transformed to its adjoint function with modified signature:
     ```python
     from numpy2ad import transform
 
@@ -48,14 +48,35 @@ Numpy2AD offers two modes of code transformation.
         return (out, A_a, B_a, C_a)
     """
     ```
-    its adjoint function with modified signature. 
-
-    The transformed code can be conveniently exported as a python module with the argument "out_file=..." for easier integration.
     
+    The transformed code can be conveniently exported as a python module with the argument "out_file=..." for validation and easier integration into existing packages.
 
 # Install
-1. (Optional) Create a virtual environment `py -m venv env` and activate it.
-2. Install locally using `pip install -e .` (requires `build` package).
+Coming soon...
+```bash
+$ pip install numpy2ad
+```
+# Building the Package
+1. Create a conda environment from the main directory
+    ```bash
+    $ conda env create --file environment.yml
+    ...
+    $ conda activate numpy2ad
+    ```
+2. Build and install the package locally 
+    ```bash
+    $ conda develop .
+    ```
+You can also use `venv` and `pip`:
+```bash
+$ python -m venv env 
+...
+$ source env/bin/activate
+...
+$ pip install -r dev_requirements.txt
+...
+$ pip install -e .
+```
 
 # Limitations
 

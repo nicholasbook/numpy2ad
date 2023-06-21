@@ -1,0 +1,8 @@
+numpy
+ipykernel
+jupyter
+pytest
+graphviz
+matplotlib
+black[jupyter]
+build
