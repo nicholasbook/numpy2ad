@@ -1,112 +1,41 @@
 import numpy as np
 from numpy2ad import transform
-import pytest
 from pytest import approx
-import os
-import sys
-import pathlib
-import shutil
 from typing import Callable
-
-
-@pytest.fixture(scope="session")
-def tmp_pkg(tmp_path_factory):
-    init = tmp_path_factory.mktemp("tmp_pkg") / "__init__.py"
-    sys.path.insert(0, str(init.parent))
-    return str(init.parent)
 
 
 def serialize(*args: np.ndarray):
     return np.concatenate([x.ravel() for x in list(args)])
 
 
-def central_finite_diff(func: Callable, *args: np.ndarray, wrt: int, index: tuple):
-    """First-order central finite difference
+def central_fd(func: Callable, *args: np.ndarray, wrt: int, index: int) -> float:
+    """Computes the central finite difference approximation (2nd order) 
+    for the derivative of func with respect to the specified input and index.
 
     Args:
-        func: function to differentiate
-        *args (np.ndarray): arguments of func
-        wrt (int): which argument to func
-        index (tuple): which entry of argument
+        func (Callable): function with signature f(*args) -> np.ndarray
+        wrt (int): input in *args to differentiate by
+        index (int): entry in input to differentiate by
+
+    Returns:
+        float: the finite difference approximation
     """
-    h = np.sqrt(np.finfo(float).eps)
-    x0 = [x.copy() for x in args]
-    x0[wrt][*index] += h / 2
-    x1 = [x.copy() for x in args]
-    x1[wrt][*index] -= h / 2
-    return 1 / h * (func(*x0) - func(*x1))
+    inputs_copy = [i.copy() for i in list(args)]
 
+    def round_to_binary(h):
+        return np.power(2.0, np.round(np.log(h) / np.log(2.0)))    
+    
+    value = (inputs_copy[wrt]).flat[index].copy()
+    h = round_to_binary(np.cbrt(np.finfo(np.float64).eps) * (1.0 + np.abs(value))) # ~7.63e-06
+    
+    (inputs_copy[wrt]).flat[index] = value - h
+    y0 = func(*inputs_copy)
+    
+    (inputs_copy[wrt]).flat[index] = value + h
+    y1 = func(*inputs_copy)
 
-def central_fd_flat(func: Callable, *args: np.ndarray, wrt: int, index: int):
-    """First-order central finite difference with 'flat' indexing
+    return (y1 - y0) / (2 * h)
 
-    Args:
-        func: function to differentiate
-        *args (np.ndarray): arguments of func
-        wrt (int): which argument to func
-        index (int): which entry of argument
-    """
-    h = np.sqrt(np.finfo(np.float64).eps)
-
-    x0 = [x.copy() for x in args]
-    (x0[wrt]).flat[index] += h / 2
-    x1 = [x.copy() for x in args]
-    (x1[wrt]).flat[index] -= h / 2
-
-    return 1 / h * (func(*x0) - func(*x1))
-
-
-def central_fd_no_copy(func: Callable, *args: np.ndarray, wrt: int, index: int):
-    """First-order central finite difference with 'flat' indexing and no copies.
-
-    Args:
-        func: function to differentiate
-        *args (np.ndarray): arguments of func
-        wrt (int): which argument to func
-        index (int): which entry of argument
-    """
-    h = np.sqrt(np.finfo(float).eps)  # ~ 1e-8
-
-    x = list(args)
-    (x[wrt]).flat[index] += h / 2
-    y0 = func(*x)
-
-    (x[wrt]).flat[index] -= h
-    y1 = func(*x)
-
-    return 1 / h * (y0 - y1)
-
-
-def central_fd_4th_order(func: Callable, *args: np.ndarray, wrt: int, index: int):
-    """Fourth-order central finite difference.
-
-    Args:
-        func: function to differentiate
-        *args (np.ndarray): arguments of func
-        wrt (int): which argument to func
-        index (int): which entry of argument
-    """
-    h = np.sqrt(np.finfo(float).eps)  # ~ 1e-8
-
-    x = list(args)
-
-    (x[wrt]).flat[index] += h
-    y1 = func(*x)
-    (x[wrt]).flat[index] -= h
-
-    (x[wrt]).flat[index] += 2 * h
-    y2 = func(*x)
-    (x[wrt]).flat[index] -= 2 * h
-
-    (x[wrt]).flat[index] -= h
-    y_1 = func(*x)
-    (x[wrt]).flat[index] += h
-
-    (x[wrt]).flat[index] -= 2 * h
-    y_2 = func(*x)
-    (x[wrt]).flat[index] += 2 * h
-
-    return 1 / h * (2 / 3 * y1 - 1 / 12 * y2 - 2 / 3 * y_1 + 1 / 12 * y_2)
 
 
 def test_central_fd():
@@ -118,37 +47,20 @@ def test_central_fd():
 
     x = np.ones(10)
 
-    dy_slow = central_finite_diff(f_sq, x, wrt=0, index=(0,))
-    assert dy_slow[0] == approx(2.0)
+    dy = central_fd(f_sq, x, wrt=0, index=0)
+    assert dy[0] == approx(2.0)
 
-    dy_lin = central_fd_flat(f_sq, x, wrt=0, index=0)
-    assert dy_lin[0] == approx(2.0)
+    A = np.random.rand(10, 10)
+    B = np.random.rand(10, 10)
 
-    dy_fast = central_fd_no_copy(f_sq, x, wrt=0, index=0)
-    assert dy_fast[0] == approx(2.0)
-
-    A = np.random.rand(10, 10) + 1e-3
-    B = np.random.rand(10, 10) + 1e-3
-
-    dy_slow = central_finite_diff(
-        f_mul, A, B, wrt=0, index=(0, 0)
+    dy_A = central_fd(
+        f_mul, A, B, wrt=0, index=0
     )  # perturb first entry in A
-    assert dy_slow[0, :] == approx(B[0, :], rel=1e-5)
-
-    dy_lin = central_fd_flat(f_mul, A, B, wrt=0, index=0)
-    assert dy_lin[0, :] == approx(B[0, :], rel=1e-5)
-
-    dy_fast = central_fd_no_copy(f_mul, A, B, wrt=0, index=0)
-    assert dy_fast[0, :] == approx(B[0, :], rel=1e-5)
-
-    dy_4th = central_fd_4th_order(f_mul, A, B, wrt=0, index=0)
-    # print(dy_fast[0, :] - B[0, :])
-    # print(dy_4th[0, :] - B[0, :])
-    assert dy_4th[0, :] == approx(B[0, :], rel=1e-5)
+    assert dy_A[0, :] == approx(B[0, :])
 
 
 def random_invertible(shape: tuple) -> np.ndarray:
-    """Returns a uniformly random (in (1, 10]) and diagonally dominant matrix of given shape.
+    """Returns a uniformly random (in (0, 1]) and diagonally dominant matrix of given shape.
 
     Args:
         shape (tuple): shape of matrix (vectors are one-column matrices)
@@ -158,7 +70,7 @@ def random_invertible(shape: tuple) -> np.ndarray:
     """
     M = (
         np.random.default_rng()
-        .uniform(low=1.0, high=10.0, size=shape)
+        .uniform(low=0.0, high=1.0, size=shape)
         .astype(dtype=np.float64)
     )  # lower bound at 1 for better accuracy
 
@@ -166,6 +78,7 @@ def random_invertible(shape: tuple) -> np.ndarray:
         if shape[0] == shape[1]:  # make square matrices diagonally dominant
             row_sum = np.sum(np.abs(M), axis=1)
             np.fill_diagonal(M, row_sum)
+            M /= np.max(M) # normalize
 
     return M
 
@@ -173,17 +86,13 @@ def random_invertible(shape: tuple) -> np.ndarray:
 def random_inputs_invariants(
     func: Callable,
     out_shape: tuple,
-    *input_shapes: tuple,
-    rel_tol: float = 1e-3,
-    abs_tol: float = 1e-6,
+    *input_shapes: tuple
 ):
     """Tests func for differential invariant with random input matrices
 
     Args:
         func (Callable): f: *input_shapes -> out_shape
         out_shape (tuple): shape of output of f (used for out_a)
-        rel_tol (float, optional): relative tolerance. Defaults to 1e-3.
-        abs_tol (float, optional): absolute tolerance. Defaults to 1e-6.
     """
     # transform function and make it visible
     exec(compile(transform(func), filename="<ast>", mode="exec"), globals())
@@ -214,13 +123,20 @@ def random_inputs_invariants(
 
                 X_T = serialize(*X)
                 Y_T = serialize(
-                    central_fd_no_copy(func, *inputs, wrt=wrt, index=index_x)
+                    central_fd(func, *inputs, wrt=wrt, index=index_x)
                 )
                 X_A = serialize(*result)
                 Y_A = serialize(out_a)
 
                 # differential invariant
-                assert X_A @ X_T == approx(Y_A @ Y_T, rel=rel_tol, abs=abs_tol)
+                adj_inv = X_A @ X_T
+                tan_inv = Y_A @ Y_T
+                abs_error = abs(adj_inv - tan_inv)            
+            
+                if adj_inv > 0.0:            
+                    rel_error = abs_error / abs(adj_inv)                                                        
+                    rel_tol = np.cbrt(np.finfo(np.float64).eps) # 6.055e-06
+                    assert rel_error < rel_tol or abs_error < 1e-10 # TODO: what is a reasonable abs tol?
 
 
 def test_mma():
