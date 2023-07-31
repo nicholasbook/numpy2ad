@@ -1,6 +1,6 @@
 ## Numpy2AD
 
-A python package for source-to-source transformation of Numpy matrix expressions to reverse mode ("adjoint") algorithmic differentiation code.
+A python package for source-to-source transformation of Numpy matrix expressions to reverse mode (*adjoint*) algorithmic/automatic differentiation code.
 # Usage
 Numpy2AD offers two modes of code transformation.
 1. In *Expression Mode* a given Numpy matrix expression string, e.g.
@@ -21,7 +21,7 @@ Numpy2AD offers two modes of code transformation.
     A_a += v0_a @ B.T
     """
     ```
-    The generated code can be easily pasted into the desired context where the derivatives `A_a`, `B_a`, `C_a`, and `D_a` are initialized. Expression mode is best suited for quick scripting and debugging. 
+    The generated code can be easily pasted into the desired context, e.g. a Jupyter notebook, where the adjoints (partial derivatives) `A_a`, `B_a`, `C_a`, and `D_a` are initialized. Expression mode is best suited for quick scripting and debugging. 
 2. In *Function Mode* a given function, e.g.
     ```python
     def mma(A, B, C):
@@ -49,7 +49,7 @@ Numpy2AD offers two modes of code transformation.
     """
     ```
     
-    The transformed code can be conveniently exported as a python module with the argument "out_file=..." for validation and easier integration into existing packages.
+    The transformed code can be conveniently exported as a module with the argument `out_file=...` for validation and easier integration into existing packages.
 
 # Install
 Coming soon...
@@ -67,6 +67,7 @@ $ pip install numpy2ad
     ```bash
     $ conda develop .
     ```
+
 You can also use `venv` and `pip`:
 ```bash
 $ python -m venv env 
@@ -79,6 +80,10 @@ $ pip install -e .
 ```
 
 # Limitations
+- The adjoint compiler currently only generates first order derivative code.
+- The expression must be aliasing-free, i.e. `A = A @ B` is not allowed.
+- The input code must not contain any control flow (`if ... else`).
+
 
 # Acknowledgements
 

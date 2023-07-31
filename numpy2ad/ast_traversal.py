@@ -3,6 +3,8 @@
 import ast
 import graphviz as viz
 import inspect
+import subprocess
+import pathlib
 from typing import Callable, Union
 
 
@@ -138,14 +140,14 @@ class RecordGraphVisitor(ast.NodeVisitor):
                     text = (
                         text
                         + str(attr[0])
-                        + ":"
+                        + ": "
                         + str(ast_node.op.__class__.__name__)
                         + "\n"
                     )
                 elif isinstance(ast_node, ast.AugAssign):
                     continue
                 else:  # default print
-                    text = text + str(attr[0]) + ":" + str(attr[1]) + "\n"
+                    text = text + str(attr[0]) + ": " + str(attr[1]) + "\n"
 
         unique_id = name + str(id or "")
         self.graph.node(unique_id, label=text)  # add node to graph
@@ -221,7 +223,7 @@ def print_AST(function: Union[str, Callable]):
     v.visit(tree)
 
 
-def draw_AST(function: Union[str, Callable]):
+def draw_AST(function: Union[str, Callable], export=False):
     """Draws the given AST in a Jupyter Notebook Cell.
     TODO: add edge labels
     Args:
@@ -234,4 +236,11 @@ def draw_AST(function: Union[str, Callable]):
         else ast.parse(function)
     )
     vis.visit(tree)
+
+    if export:
+        path = pathlib.Path("./graph.dot")
+        with open(path, "w") as out:
+            out.write(vis.graph.source)
+        subprocess.run(["dot", "-Tsvg", "-o", "graph.svg", "graph.dot"])
+
     return vis.graph

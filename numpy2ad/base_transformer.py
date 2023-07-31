@@ -32,17 +32,20 @@ class AdjointTransformer(ast.NodeTransformer):
         else:
             return res.group(1)
 
-    def _make_attribute(self, var: str, attr: str) -> ast.Attribute:
-        return ast.Attribute(
-            value=ast.Name(id=var, ctx=ast.Load()), attr=attr, ctx=ast.Load()
-        )
+    def _make_attribute(self, value: str | ast.Attribute, attr: str) -> ast.Attribute:
+        if isinstance(value, ast.Attribute):
+            return ast.Attribute(value=value, attr=attr, ctx=ast.Load())
+        else:
+            return ast.Attribute(
+                value=ast.Name(id=value, ctx=ast.Load()), attr=attr, ctx=ast.Load()
+            )
 
     def _make_call(self, func: ast.Attribute, args: list[ast.Attribute]) -> ast.Call:
         return ast.Call(func=func, args=args, keywords=[])
 
     def _numpy_zeros(self, var: ast.Name) -> str:
         return self._make_call(
-            func=self._make_attribute(var="np", attr="zeros_like"),
+            func=self._make_attribute(value="np", attr="zeros_like"),
             args=[self._make_ctx_load(var)],
         )  # this does not work for scalars !! # TODO: use np.zeros_like
 
@@ -316,13 +319,22 @@ class AdjointTransformer(ast.NodeTransformer):
     def visit_Attribute(self, node: ast.Attribute) -> ast.Name:
         if node.attr == "T":
             if isinstance(node.value, ast.Name):  # A^T
-                new_v = self._generate_SAC(node)
-                self._generate_ad_SAC(
-                    rhs=self._make_attribute(var=node.value.id + "_a", attr="T"),
-                    target=self._make_ad_target(new_v),
-                    init_mode=True,
-                )  # e.g. v0_a = A_a.T
-                return new_v
+                orig_id = node.value.id
+                new_v = self.var_table.get(orig_id + "_T", None)  # lookup
+                if new_v is not None:
+                    return new_v
+                else:
+                    new_v = self._generate_SAC(node)
+                    rhs = (  # self._make_call(func=self._make_attribute(value=
+                        self._make_attribute(value=orig_id + "_a", attr="T")
+                    )  # , attr="copy"), args=[])
+                    self._generate_ad_SAC(
+                        rhs=rhs,
+                        target=self._make_ad_target(new_v),
+                        init_mode=True,
+                    )  # e.g. v0_a = A_a.T
+                    self.var_table[orig_id + "_T"] = new_v  # store in table
+                    return new_v
             else:  # recursion
                 node.value = self.visit(node.value)
                 return self.visit(node)
