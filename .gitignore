@@ -10,3 +10,4 @@ benchmarks/benchmarks.pdf
 benchmarks/timeit_gls.txt
 benchmarks/timeit_mma.txt
 env/
+tests/_invariant_demo.ipynb
