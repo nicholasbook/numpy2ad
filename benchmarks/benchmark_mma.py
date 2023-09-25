@@ -1,6 +1,7 @@
 import numpy as np
 from numpy2ad import transform
 import timeit
+import gc
 
 
 def MMA(A, B, C):
@@ -47,9 +48,7 @@ def central_fd(func, *args: np.ndarray, wrt: int, index: int) -> float:
         return np.power(2.0, np.round(np.log(h) / np.log(2.0)))
 
     value = (inputs_copy[wrt]).flat[index].copy()
-    h = round_to_binary(
-        np.cbrt(np.finfo(np.float64).eps) * (1.0 + np.abs(value))
-    )  # ~7.63e-06
+    h = round_to_binary(np.cbrt(np.finfo(np.float64).eps) * (1.0 + np.abs(value)))  # ~7.63e-06
 
     (inputs_copy[wrt]).flat[index] = value - h
     y0 = func(*inputs_copy)
@@ -67,94 +66,138 @@ def benchmark_mma_cfd(A, B, C):
 
 
 if __name__ == "__main__":
-    # num_rows = [10, 20, 40, 60, 80, 100, 120, 256, 512, 1024, 2048]#, 1024]#, 2048, 4096, 8192]
-
-    # Benchmark forward & reverse pass
-
-    num_rows_fwd_rev = [64, 128, 256, 512, 1024, 2048, 4096]
-
-    results_fwd_rev = np.zeros(
-        shape=(len(num_rows_fwd_rev), 4)
-    )  # rows | fwd | fwd & rev | rel cost
-
     # generate MMA_ad
     exec(compile(transform(MMA), filename="<ast>", mode="exec"))
 
-    for i, rows in enumerate(num_rows_fwd_rev):
-        average_over = 10 if rows <= 1024 else 5
+    # Benchmark forward & reverse pass
+    if True:
+        num_rows_fwd_rev = [64, 128, 256, 512, 1024, 2048, 4096]
+        avg_over = [1e6, 5e5, 1e4, 5e3, 5e2, 1e2, 1e1]
+        factor = 0.5
 
-        # intialize
-        A = np.random.rand(rows, rows)
-        B = np.random.rand(rows, rows)
-        C = np.random.rand(rows, rows)
+        results_fwd_rev = np.zeros(
+            shape=(len(num_rows_fwd_rev), 6)
+        )  # rows | fwd | fwd & rev | rel cost | fd | rel cost fd
 
-        mma_result = timeit.timeit(
-            "benchmark_mma(A, B, C)",
-            setup="from __main__ import benchmark_mma, MMA",
-            globals=locals(),
-            number=average_over,
-        )
-        print(f"MMA with {rows=} took {mma_result} seconds.")
+        for i, rows in enumerate(num_rows_fwd_rev):
+            average_over = int(factor * avg_over[i])
 
-        # transformed code
-        mma_ad_result = timeit.timeit(
-            "benchmark_mma_ad(A, B, C, MMA_ad)",
-            setup="from __main__ import benchmark_mma_ad",
-            globals=locals(),
-            number=average_over,
-        )
-        print(f"Adjoint with {rows=} took {mma_ad_result} seconds.")
+            gc.disable()  # garbage collection
 
-        results_fwd_rev[i, :] = [
-            rows,
-            mma_result / average_over,  # avg. forward pass
-            mma_ad_result / average_over,  # avg. forward + reverse
-            mma_ad_result / mma_result,  # rel cost
-        ]
-        print("")
+            # intialize
+            A = np.random.rand(rows, rows)
+            B = np.random.rand(rows, rows)
+            C = np.random.rand(rows, rows)
 
-    np.savetxt("timeit_mma_fwd_rev.txt", results_fwd_rev)
+            # forward pass
+            # warm up
+            for _ in range(average_over // 10):
+                benchmark_mma(A, B, C)
+
+            mma_result = timeit.timeit(
+                "benchmark_mma(A, B, C)",
+                setup="from __main__ import benchmark_mma, MMA",
+                globals=locals(),
+                number=average_over,
+            )
+            print(f"MMA with {rows=} took {mma_result} seconds.")
+
+            # transformed code
+            # warm up again
+            for _ in range(average_over // 10):
+                benchmark_mma_ad(A, B, C, MMA_ad)
+
+            mma_ad_result = timeit.timeit(
+                "benchmark_mma_ad(A, B, C, MMA_ad)",
+                setup="from __main__ import benchmark_mma_ad",
+                globals=locals(),
+                number=average_over,
+            )
+            print(f"Adjoint with {rows=} took {mma_ad_result} seconds.")
+
+            # finite difference
+            # warm up
+            for _ in range(average_over // 10):
+                central_fd(MMA, A, B, C, wrt=0, index=0)
+
+            mma_fd_result = timeit.timeit(
+                "central_fd(MMA, A, B, C, wrt=0, index=0)",
+                setup="from __main__ import MMA, central_fd",
+                globals=locals(),
+                number=average_over,
+            )
+            print(f"FD with {rows=} took {mma_fd_result} seconds.")
+
+            results_fwd_rev[i, :] = [
+                rows,
+                mma_result / average_over,  # avg. forward pass
+                mma_ad_result / average_over,  # avg. forward + reverse
+                mma_ad_result / mma_result,  # rel cost
+                mma_fd_result / average_over,  # finite difference
+                mma_fd_result / mma_result,
+            ]
+            print("")
+
+            gc.enable()
+
+        np.savetxt("timeit_mma_fwd_rev.txt", results_fwd_rev)
 
     # ---------- Benchmark full Jacobian ---------- #
 
-    num_rows_full = [8, 16, 32, 64, 96, 128]
+    if True:
+        num_rows_full = [8, 16, 32, 64, 96, 128]
+        avg_over = [1e4, 1e3, 5e2, 1e2, 1e1, 1e1]
+        factor = 0.5
 
-    results_full = np.zeros(
-        shape=(len(num_rows_full), 4)
-    )  # rows | adjoint | cfd | rel cost
+        results_full = np.zeros(
+            shape=(len(num_rows_full), 4)
+        )  # rows | adjoint | cfd | rel cost
 
-    for i, rows in enumerate(num_rows_full):
-        average_over = 5
+        for i, rows in enumerate(num_rows_full):
+            average_over = int(factor * avg_over[i])
 
-        A = np.random.rand(rows, rows)
-        B = np.random.rand(rows, rows)
-        C = np.random.rand(rows, rows)
+            gc.disable()  # garbage collection
 
-        # full jacobian
-        mma_ad_full_result = timeit.timeit(
-            "benchmark_mma_ad_full(A, B, C, MMA_ad)",
-            setup="from __main__ import benchmark_mma_ad_full",
-            globals=locals(),
-            number=average_over,
-        )
-        print(f"Adjoint full Jacobian with {rows=} took {mma_ad_full_result} seconds.")
+            A = np.random.rand(rows, rows)
+            B = np.random.rand(rows, rows)
+            C = np.random.rand(rows, rows)
 
-        # finite difference
-        mma_cfd_result = timeit.timeit(
-            "benchmark_mma_cfd(A, B, C)",
-            setup="from __main__ import MMA, benchmark_mma_cfd",
-            globals=locals(),
-            number=average_over,
-        )
-        print(f"CFD full Jacobian with {rows=} took {mma_cfd_result} seconds.")
-        print("")
+            # full jacobian
+            # warm up
 
-        results_full[i, :] = [
-            rows,
-            mma_ad_full_result / average_over,  # avg. full jacobian
-            mma_cfd_result / average_over,  # avg. full tangent jacobian
-            mma_cfd_result
-            / mma_ad_full_result,  # relative cost of tangent approximation
-        ]
+            for _ in range(average_over // 10):
+                benchmark_mma_ad_full(A, B, C, MMA_ad)
 
-    np.savetxt("timeit_mma_full.txt", results_full)
+            mma_ad_full_result = timeit.timeit(
+                "benchmark_mma_ad_full(A, B, C, MMA_ad)",
+                setup="from __main__ import benchmark_mma_ad_full",
+                globals=locals(),
+                number=average_over,
+            )
+            print(f"Adjoint full Jacobian with {rows=} took {mma_ad_full_result} seconds.")
+
+            # finite difference
+            # warm up
+
+            for _ in range(average_over // 10):
+                benchmark_mma_cfd(A, B, C)
+
+            mma_cfd_result = timeit.timeit(
+                "benchmark_mma_cfd(A, B, C)",
+                setup="from __main__ import MMA, benchmark_mma_cfd",
+                globals=locals(),
+                number=average_over,
+            )
+            print(f"CFD full Jacobian with {rows=} took {mma_cfd_result} seconds.")
+            print("")
+
+            results_full[i, :] = [
+                rows,
+                mma_ad_full_result / average_over,  # avg. full jacobian
+                mma_cfd_result / average_over,  # avg. full tangent jacobian
+                mma_cfd_result / mma_ad_full_result,  # relative cost of tangent approximation
+            ]
+
+            gc.enable()
+
+        np.savetxt("timeit_mma_full.txt", results_full)
