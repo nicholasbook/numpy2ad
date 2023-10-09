@@ -5,9 +5,11 @@ __pycache__
 tmp/
 .vscode
 demo/example_problems.html
-benchmarks/benchmarks.md
-benchmarks/benchmarks.pdf
-benchmarks/timeit_gls.txt
-benchmarks/timeit_mma.txt
+benchmarks/results
 env/
 tests/_invariant_demo.ipynb
+tests/debug/
+tmp.ipynb
+
+benchmarks/benchmarks.md
+benchmarks/benchmarks.pdf
