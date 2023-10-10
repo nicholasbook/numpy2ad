@@ -12,7 +12,6 @@ from textwrap import dedent
 # - introduce some basic code optimizations
 # - figure out higher derivatives
 # - solve for inverse matrix
-# - consider using input variable names (maybe by a secondary pass over AST)
 
 
 class FunctionTransformer(AdjointTransformer):
@@ -29,7 +28,7 @@ class FunctionTransformer(AdjointTransformer):
     def __init__(self) -> None:
         super().__init__()
         self.return_list = list()
-
+        
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
         """Recursively visits binary operation and generates SAC until it resolves to single-variables.
 
@@ -61,7 +60,36 @@ class FunctionTransformer(AdjointTransformer):
         else:
             return super()._recursive_BinOP(node)
 
-    def visit_Call(self, node: ast.Call):
+    def visit_Call(self, node: ast.Call) -> ast.Name:
+        # special case for function we do not differentiate, e.g. np.eye, np.full, ...
+        if derivative_Call(node, 0) is None:
+            new_v: ast.Name
+            new_v_a: ast.Name
+            if (
+                self.assign_target is not None
+                and self.call_depth == 0
+                and self.binop_depth == 0
+            ):
+                assert self.return_target is None
+                new_v = self.assign_target
+                self.primal_stack.append(ast.Assign(targets=[new_v], value=node))
+                new_v_a = self._generate_ad_SAC(
+                    self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+                )
+                self.assign_target = None
+            elif self.return_target is not None and isinstance(self.return_target, ast.Call):
+                raise NotImplementedError
+                assert self.assign_target is None
+                new_v = ast.Name(id=self.out_id, ctx=ast.Store())
+                new_v_a = self._make_ad_target(new_v)  # out_a is given as input
+                self._generate_custom_SAC(lhs=new_v, rhs=node)
+            else:
+                new_v = self._generate_SAC(node)
+                new_v_a = self._generate_ad_SAC(
+                    self._numpy_zeros(new_v), self._make_ad_target(new_v), True
+                )
+            return new_v  # no point traversing further
+
         # (recursively) visit arguments
         self.call_depth += 1
         super()._visit_Call_args(node)
@@ -71,9 +99,7 @@ class FunctionTransformer(AdjointTransformer):
         new_v: ast.Name
         new_v_a: ast.Name
         if (
-            self.assign_target is not None
-            and self.call_depth == 0
-            and self.binop_depth == 0
+            self.assign_target is not None and self.call_depth == 0 and self.binop_depth == 0
         ):  # e.g. B = A + np.linalg.inv(C) -> v0 = np.linalg.inv(C); B = A + v0
             assert self.return_target is None
             new_v = self.assign_target
@@ -166,6 +192,7 @@ class FunctionTransformer(AdjointTransformer):
         # assumes that there is only one output
         self.return_list.insert(0, final_v)
 
+        # append 'out_a' to signature
         out_a_arg = ast.arg(arg=f"{self.out_id}_a")
         if out_a_arg.arg not in [arg.arg for arg in self.functionDef.args.args]:
             self.functionDef.args.args.append(out_a_arg)
@@ -202,9 +229,7 @@ class FunctionTransformer(AdjointTransformer):
         new_node = self.generic_visit(node)
 
         # insert "import numpy as np"
-        new_node.body.insert(
-            0, ast.Import(names=[ast.alias(name="numpy", asname="np")])
-        )
+        new_node.body.insert(0, ast.Import(names=[ast.alias(name="numpy", asname="np")]))
         return new_node
 
 
@@ -219,9 +244,7 @@ def transform(func: Union[Callable, str], output_file: str = None) -> str:
     """
     transformer = FunctionTransformer()
     tree = (
-        ast.parse(dedent(getsource(func)))
-        if isinstance(func, Callable)
-        else ast.parse(func)
+        ast.parse(dedent(getsource(func))) if isinstance(func, Callable) else ast.parse(func)
     )
     newAST = transformer.visit(tree)
     newAST = ast.fix_missing_locations(newAST)

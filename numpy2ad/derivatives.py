@@ -34,15 +34,11 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
                 value=ast.Constant(value=(1.0 if wrt is WithRespectTo.Left else -1.0))
             )
         case ast.Mult:  # c = l * r
-            return ast.Expr(
-                value=(node.right if wrt is WithRespectTo.Left else node.left)
-            )
+            return ast.Expr(value=(node.right if wrt is WithRespectTo.Left else node.left))
         case ast.Div:  # c = a / b -> 1/b or -a / b**2
             return ast.Expr(
                 value=(
-                    ast.BinOp(
-                        op=ast.Div(), left=ast.Constant(value=1.0), right=node.right
-                    )
+                    ast.BinOp(op=ast.Div(), left=ast.Constant(value=1.0), right=node.right)
                     if wrt is WithRespectTo.Left
                     else ast.BinOp(
                         op=ast.Div(),
@@ -66,9 +62,7 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
             new_right = ast.BinOp(
                 op=ast.Pow(),
                 left=node.left,
-                right=ast.BinOp(
-                    op=ast.Sub(), left=node.right, right=ast.Constant(value=1)
-                ),
+                right=ast.BinOp(op=ast.Sub(), left=node.right, right=ast.Constant(value=1)),
             )
 
             value = ast.BinOp(op=ast.Mult(), left=node.right, right=new_right)
@@ -97,9 +91,7 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
             return ast.Expr(
                 value=ast.UnaryOp(
                     op=ast.USub(),
-                    operand=ast.BinOp(
-                        op=ast.MatMult(), left=A_inv_T, right=binop_right
-                    ),
+                    operand=ast.BinOp(op=ast.MatMult(), left=A_inv_T, right=binop_right),
                 )
             )
         case "exp":
@@ -109,9 +101,7 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
                 recip = deepcopy(call.func)
                 recip.attr = "reciprocal"  # does not work for integers!
 
-                return ast.Expr(
-                    value=ast.Call(func=recip, args=[call.args[1]], keywords=[])
-                )
+                return ast.Expr(value=ast.Call(func=recip, args=[call.args[1]], keywords=[]))
 
             else:  # - a / b ** 2
                 minus_a = ast.UnaryOp(op=ast.USub(), operand=call.args[0])
@@ -137,6 +127,12 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
         case "zeros":
             return None
         case "transpose":
+            return None
+        case "full":
+            return None
+        case "diag":
+            return None
+        case "eye":
             return None
         case _:
             raise ValueError("Not implemented yet")

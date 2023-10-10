@@ -122,9 +122,7 @@ class AdjointTransformer(ast.NodeTransformer):
         self.binop_depth -= 1
         return self.visit(node)  # recursion
 
-    def _make_BinOp_SAC_AD(
-        self, binop_node: ast.BinOp, target: ast.Name = None
-    ) -> ast.Name:
+    def _make_BinOp_SAC_AD(self, binop_node: ast.BinOp, target: ast.Name = None) -> ast.Name:
         """Generates and inserts SAC into FunctionDef for BinOp node. Returns the newly assigned variable.
 
         Args:
@@ -193,9 +191,7 @@ class AdjointTransformer(ast.NodeTransformer):
         # rhs of BinOp
         r_deriv = derivative_BinOp(new_node.value, WithRespectTo.Right)  # ast.Expr
         if r_deriv is not None:
-            self._generate_ad_SAC(
-                __make_rhs(r_deriv), self._make_ad_target(right_v), False
-            )
+            self._generate_ad_SAC(__make_rhs(r_deriv), self._make_ad_target(right_v), False)
 
         if target is None:
             self.counter += 1
@@ -204,12 +200,11 @@ class AdjointTransformer(ast.NodeTransformer):
     def visit_Constant(self, node: ast.Constant) -> ast.Name:
         """generates SAC for constant assignment and returns the newly assigned v_i"""
         # TODO: keep BinOps like '2 * A' as is
+        # in which cases do we even need SAC for constants?
         if isinstance(node.value, str):
             return node  # docstring is removed
         new_v = self._generate_SAC(node)
-        self._generate_ad_SAC(
-            ast.Constant(value=0.0), self._make_ad_target(new_v), True
-        )
+        self._generate_ad_SAC(ast.Constant(value=0.0), self._make_ad_target(new_v), True)
         return new_v
 
     def _visit_Call_args(self, node: ast.Call) -> None:
@@ -227,32 +222,34 @@ class AdjointTransformer(ast.NodeTransformer):
         # adjoints of args (already initialized)
         for i in range(len(node.args)):
             if isinstance(node.args[i], ast.Name):
-                d = derivative_Call(node, i).value
+                d = derivative_Call(node, i)
+                if d is not None:
+                    deriv = d.value
 
-                if isinstance(node.func.value, ast.Attribute):
-                    if node.func.value.attr == "linalg" and node.func.attr == "inv":
-                        # e.g. v = np.linalg.inv(A) -> A_a -= v.T @ v_a @ v
-                        assert len(node.args) == 1
+                    if isinstance(node.func.value, ast.Attribute):
+                        if node.func.value.attr == "linalg" and node.func.attr == "inv":
+                            # e.g. v = np.linalg.inv(A) -> A_a -= v.T @ v_a @ v
+                            assert len(node.args) == 1
 
-                        d: ast.UnaryOp
-                        d.operand.left.value.id = new_v.id  # insert v
-                        d.operand.right.left.id = new_v_a.id  # insert v_a
-                        d.operand.right.right.id = new_v.id
+                            deriv: ast.UnaryOp
+                            deriv.operand.left.value.id = new_v.id  # insert v
+                            deriv.operand.right.left.id = new_v_a.id  # insert v_a
+                            deriv.operand.right.right.id = new_v.id
 
+                            self._generate_ad_SAC(
+                                rhs=deriv,
+                                target=self._make_ad_target(node.args[i]),
+                                init_mode=False,
+                            )
+                    elif deriv is not None:
+                        prod = ast.BinOp(
+                            op=ast.Mult(), left=deriv, right=self._make_ctx_load(new_v_a)
+                        )
                         self._generate_ad_SAC(
-                            rhs=d,
+                            rhs=prod,
                             target=self._make_ad_target(node.args[i]),
                             init_mode=False,
                         )
-                elif d is not None:
-                    prod = ast.BinOp(
-                        op=ast.Mult(), left=d, right=self._make_ctx_load(new_v_a)
-                    )
-                    self._generate_ad_SAC(
-                        rhs=prod,
-                        target=self._make_ad_target(node.args[i]),
-                        init_mode=False,
-                    )
 
     def visit_Call(self, node: ast.Call) -> ast.Name:
         """replaces the arguments of a function call, generates SAC, and returns the newly assigned v_i"""
@@ -264,9 +261,7 @@ class AdjointTransformer(ast.NodeTransformer):
         new_v: ast.Name
         new_v_a: ast.Name
         if (
-            self.assign_target is not None
-            and self.call_depth == 0
-            and self.binop_depth == 0
+            self.assign_target is not None and self.call_depth == 0 and self.binop_depth == 0
         ):  # e.g. B = A + np.linalg.inv(C) -> v0 = np.linalg.inv(C); B = A + v0
             new_v = self.assign_target
             self.primal_stack.append(ast.Assign(targets=[new_v], value=node))
@@ -287,9 +282,7 @@ class AdjointTransformer(ast.NodeTransformer):
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
         """returns the v_i corresponding to node (lookup)"""
-        v_id = self.var_table.get(
-            node.id, node.id
-        )  # defaults to id if not found in dict
+        v_id = self.var_table.get(node.id, node.id)  # defaults to id if not found in dict
         return ast.Name(id=v_id, ctx=ast.Load())
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.Name:
@@ -309,9 +302,7 @@ class AdjointTransformer(ast.NodeTransformer):
         )
         new_v_a_c = copy(new_v_a)
         new_v_a_c.ctx = ast.Load()
-        prod = ast.BinOp(
-            op=ast.Mult(), left=derivative_UnOp(node).value, right=new_v_a_c
-        )
+        prod = ast.BinOp(op=ast.Mult(), left=derivative_UnOp(node).value, right=new_v_a_c)
         self._generate_ad_SAC(prod, self._make_ad_target(node.operand), False)
 
         return new_v
@@ -338,6 +329,8 @@ class AdjointTransformer(ast.NodeTransformer):
             else:  # recursion
                 node.value = self.visit(node.value)
                 return self.visit(node)
+        elif node.attr == "shape":
+            return None  # ignore
         else:
             return node
 
