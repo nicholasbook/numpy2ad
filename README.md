@@ -1,6 +1,6 @@
 ## Numpy2AD
 
-A python package for source-to-source transformation of Numpy matrix expressions to reverse mode, also referred to as *adjoint*, algorithmic differentiation code.
+A Python package for *source-to-source* transformation of Numpy matrix expressions to reverse-mode, also referred to as *adjoint*, algorithmic differentiation code.
 # Usage
 **Numpy2AD** offers two modes of code transformation.
 1. In *Expression Mode* a given Numpy matrix expression string, e.g.
@@ -9,7 +9,7 @@ A python package for source-to-source transformation of Numpy matrix expressions
     
     print(transform_expr("D = A @ B + C"))
     ```
-    is transformed to its reverse mode (adjoint) differentiation code
+    is transformed to its reverse-mode (adjoint) differentiation code:
     ```python
     """
     v0 = A @ B
@@ -51,6 +51,8 @@ A python package for source-to-source transformation of Numpy matrix expressions
     
     The transformed code can be conveniently exported as a module with the argument `out_file=...` for validation and easier integration into existing packages.
 
+*Algorithmic Differentiation* is the state of the art for sensitivity analysis and optimization in many fields of application, e.g. computational engineering, finance, and machine learning. For more information,  [this book](https://epubs.siam.org/doi/10.1137/1.9781611972078) is a good entry point to the subject.
+
 # Install
 Coming soon...
 ```bash
@@ -59,16 +61,15 @@ $ pip install numpy2ad
 
 # Supported Matrix Operations
 
-**Numpy2Ad** currently supports a limited but broadly applicable subset of Numpy matrix operations. If not further specified, the operations are also valid for n-dimensional vectors.
+**Numpy2Ad** currently supports a limited but broadly applicable subset of Numpy matrix operations. We define a "matrix" as a two-dimensional `numpy.ndarray`. If not further specified, the operations are also valid for one-dimensional "vectors".
 
 - Matrix **Addition** `C = A + B` and **Subtraction** `C = A - B`
 - Matrix (Inner) **Products** `C = A @ B`
-    - Exception: Inner products between two vectors `c = a @ b` as they result in a scalar. 
-    TODO: find workaround
+    - Exception: Inner products between two vectors `c = a @ b` as they result in a scalar.
 - Matrix **Inverse** `B = np.linalg.inv(A)`
 - Matrix **Transpose** `B = A.T`
 - **Element-wise** product `C = A * B`
-    - Note that dimension of `A` and `B` must match. Numpy's broadcasting rules are **not** considered during code generation, e.g. multiplying a *scalar* by a *matrix* will lead to **incorrect** derivative code.
+    - Note that dimension of `A` and `B` must match. Numpy's broadcasting rules are **not** considered during code generation, e.g. multiplying a scalar variable by a matrix will lead to **incorrect** derivative code.
 
 # Limitations
 - The adjoint compiler currently only generates **first order**, **reverse-mode** derivative code. Forward-mode ("tangents") ist not supported.
@@ -77,11 +78,11 @@ $ pip install numpy2ad
 
 # Demo, Tests, and Benchmarks
 
-Check out `/demo/example_problems.ipynb` for a collection of matrix models that **Numpy2AD** was applied to and tested on. A more in-depth user guide can be found in `/demo/demo.ipynb`. TODO: rename into `demo` and `tutorial`
+Check out `/demo/example_problems.ipynb` for a collection of matrix models that **Numpy2AD** was applied to and tested on. A more in-depth user guide can be found in `/demo/tutorial.ipynb`.
 
 Tests of code generation and numerical correctness of derivatives, compared to naive finite differences, can be found in `/tests/`.
 
-Furthermore, there are some simple runtime benchmarks for the MMA and GLS model in `/benchmarks/`.
+Furthermore, there are some simple runtime benchmarks for the *MMA* and *GLS* model in `/benchmarks/`.
 
 # Building the Package from Source
 1. Create a conda environment from the main directory
@@ -107,7 +108,7 @@ Furthermore, there are some simple runtime benchmarks for the MMA and GLS model 
     ```
 
 # Acknowledgements
-This work was carried out by Nicholas Book as part of a seminar thesis under the supervision of Uwe Naumann and Simon Märtens (STCE, RWTH Aachen University, Germany).
+This package was developed by Nicholas Book as part of a Master's seminar thesis under the supervision and close collaboration of Uwe Naumann and Simon Märtens (STCE, RWTH Aachen University, Germany).
 
 # License
 MIT License.
