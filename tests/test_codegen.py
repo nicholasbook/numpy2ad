@@ -165,6 +165,20 @@ def test_nested_call():
     assert is_transformed_to(f, f_ad)
 
 
+def test_elementwise():
+    def ew_mult(A, B):
+        return A * B
+    
+    def ew_mult_ad(A, B, A_a, B_a, out_a):
+        out = A * B
+        B_a += A * out_a
+        A_a += B * out_a
+        return (out, A_a, B_a)
+    
+    assert is_transformed_to(ew_mult, ew_mult_ad)
+
+
+# debugging
 if __name__ == "__main__":
     test_strip_import()
     test_expression()
@@ -175,3 +189,4 @@ if __name__ == "__main__":
     test_assign()
     test_return_nested_binop()
     test_nested_call()
+    test_elementwise()

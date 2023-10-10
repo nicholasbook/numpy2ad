@@ -2,6 +2,7 @@ import numpy as np
 from numpy2ad import transform
 from pytest import approx
 from typing import Callable
+import pathlib
 
 
 def serialize(*args: np.ndarray):
@@ -26,9 +27,7 @@ def central_fd(func: Callable, *args: np.ndarray, wrt: int, index: int) -> float
         return np.power(2.0, np.round(np.log(h) / np.log(2.0)))
 
     value = (inputs_copy[wrt]).flat[index].copy()
-    h = round_to_binary(
-        np.cbrt(np.finfo(np.float64).eps) * (1.0 + np.abs(value))
-    )  # ~7.63e-06
+    h = round_to_binary(np.cbrt(np.finfo(np.float64).eps) * (1.0 + np.abs(value)))  # ~7.63e-06
 
     (inputs_copy[wrt]).flat[index] = value - h
     y0 = func(*inputs_copy)
@@ -82,11 +81,17 @@ def random_invertible(shape: tuple, method="det") -> np.ndarray:
     """Returns a uniformly random (in (0, 1]) and diagonally dominant matrix of given shape.
 
     Args:
-        shape (tuple): shape of matrix (vectors are one-column matrices)
+        shape (tuple): shape of matrix.
+
+        Note that vectors must have shape (n, 1).
+        For input shape (n, ) a constant full (n, n) matrix is returned (for element-wise ops).
 
     Returns:
         np.ndarray: generated matrix
     """
+    # if len(shape) == 1:  # e.g. (5, ) -> (5, 5) constant matrix
+    #     return np.full(shape=(shape[0], shape[0]), fill_value=np.random.rand())
+    # else:
     M = (
         np.random.default_rng()
         .uniform(low=0.0, high=1.0, size=shape)
@@ -94,7 +99,7 @@ def random_invertible(shape: tuple, method="det") -> np.ndarray:
     )
     if len(shape) > 1:
         if shape[0] == shape[1]:  # square matrix
-            if method == "diagonal":  # normalized diagonal dominance -> ensures regularity
+            if method == "diag":  # normalized diagonal dominance -> ensures regularity
                 row_sum = np.sum(np.abs(M), axis=1)
                 np.fill_diagonal(M, row_sum)
                 M /= np.max(M)
@@ -103,17 +108,19 @@ def random_invertible(shape: tuple, method="det") -> np.ndarray:
             elif method == "det":  # unit determinant -> invariants too small?
                 det = np.linalg.det(M)
                 M = M * np.sign(det) * (1.0 / np.abs(det)) ** (1.0 / shape[0])
+            elif method == "sum":
+                M = M.T @ M + shape[0] * np.eye(*shape)
             elif method == "rand":
                 pass
             else:
                 raise ValueError("method not recognized")
 
-        # TODO: what about rectangular (m > n) matrices? A @ A.T becomes singular!
-
     return M
 
 
-def random_inputs_invariants(func: Callable, out_shape: tuple, *input_shapes: tuple):
+def random_inputs_invariants(
+    func: Callable, out_shape: tuple, *input_shapes: tuple, method="diag", debug=False
+):
     """Tests func for differential invariant with random input matrices
 
     Args:
@@ -121,15 +128,26 @@ def random_inputs_invariants(func: Callable, out_shape: tuple, *input_shapes: tu
         out_shape (tuple): shape of output of f (used for out_a)
     """
     # transform function and make it visible
-    exec(compile(transform(func), filename="<ast>", mode="exec"), globals())
-    func_ad = eval(func.__name__ + "_ad")
+    if not debug:
+        exec(compile(transform(func), filename="<ast>", mode="exec"), globals())
+        func_ad = eval(func.__name__ + "_ad")
+    else:
+        tests = pathlib.Path(__file__).parent
+        tmp_module = tests / "debug"
+        if not tmp_module.exists():
+            tmp_module.mkdir()
+            init = tmp_module / "__init__.py"
+            f = init.open("w")
+            f.close()
+        module = tmp_module / f"{func.__name__}.py"
+        transform(func, output_file=module)
+        exec(f"from debug.{func.__name__} import {func.__name__}_ad")
+        func_ad = eval(func.__name__ + "_ad")
 
     num_out_adj = np.prod(out_shape)
     for i in range(num_out_adj):
         # random inputs for i-th output adjoint
-        inputs = [
-            random_invertible(shape, method="diagonal") for shape in list(input_shapes)
-        ]
+        inputs = [random_invertible(shape, method=method) for shape in list(input_shapes)]
         inputs_a = [np.zeros_like(entry) for entry in inputs]
 
         out_a = np.zeros(out_shape)
@@ -163,7 +181,7 @@ def random_inputs_invariants(func: Callable, out_shape: tuple, *input_shapes: tu
                     rel_error = abs_error / abs(adj_inv)
                     rel_tol = np.cbrt(np.finfo(np.float64).eps)  # 6.055e-06
                     assert (
-                        rel_error < rel_tol or abs_error < 1e-9
+                        rel_error < rel_tol or abs_error < 1e-11
                     )  # TODO: what is a reasonable abs tol?
 
 
@@ -177,13 +195,25 @@ def test_mma():
     random_inputs_invariants(mma, (5, 5), (5, 15), (15, 5), (5, 5))
 
 
-def test_inv_scale():
-    def inv_scale(A: np.ndarray, k: np.ndarray):
-        scale = 1.0 / k
-        return scale * A  # element-wise
+def test_elementwise(debug=False):
+    # we want to support elementwise matrix-matrix and vector-vector multiplications
+    # as they occur in the form of regularization terms in matrix problems
 
-    random_inputs_invariants(inv_scale, (5, 5), (5, 5), (5, 5))
+    def ew_product(A: np.ndarray, B: np.ndarray):
+        return A * B
+    
+    shape_A = (5, 5)
+    shape_B = (5, 5)
+    random_inputs_invariants(ew_product, shape_A, shape_A, shape_B, debug=debug)
+    random_inputs_invariants(ew_product, (3, 1), (3, 1), (3, 1))
+    random_inputs_invariants(ew_product, (3, ), (3, ), (3, ))
 
+    # might be useful
+    def ew_square(A: np.ndarray):
+        return A**2
+
+    random_inputs_invariants(ew_square, (3, 3), (3, 3))
+    random_inputs_invariants(ew_square, (5, ), (5, ))
 
 def test_quadric():
     # requires second order accuracy!
@@ -191,75 +221,126 @@ def test_quadric():
         # (n,m)(m,m)(m,n) + (n,m)(m,n) + (n,n)
         return B.T @ A @ B + B.T @ C + D
 
-    shape_A = (15, 15)
-    shape_B = (15, 10)
-    shape_C = (15, 10)
-    shape_D = (10, 10)
+    shape_A = (5, 5)
+    shape_B = (5, 3)
+    shape_C = (5, 3)
+    shape_D = (3, 3)
 
     random_inputs_invariants(quadric, shape_D, shape_A, shape_B, shape_C, shape_D)
+    random_inputs_invariants(quadric, (4, 4), (8, 8), (8, 4), (8, 4), (4, 4))
 
 
 def test_inverse():
     def inverse(A):
         return np.linalg.inv(A)
 
+    random_inputs_invariants(inverse, (3, 3), (3, 3))
     random_inputs_invariants(inverse, (5, 5), (5, 5))
-    random_inputs_invariants(inverse, (10, 10), (10, 10))
-    random_inputs_invariants(inverse, (15, 15), (15, 15))
+    random_inputs_invariants(inverse, (6, 6), (6, 6))
 
 
 def test_gls():
     def GLS(M, X, y):
-        # M: n x n, X: n x m, y: n x 1
+        # M: n x n, X: n x m, y: n x 1, b: m x 1, n > m
         M_inv = np.linalg.inv(M)
         return np.linalg.inv(X.T @ M_inv @ X) @ X.T @ M_inv @ y
 
-    dims_M = (10, 10)
-    dims_X = (10, 5)
-    dims_y = (10, 1)
-    dims_b = (5, 1)
+    dims_M = (5, 5)
+    dims_X = (5, 3)
+    dims_y = (5, 1)
+    dims_b = (3, 1)
 
     random_inputs_invariants(GLS, dims_b, dims_M, dims_X, dims_y)
-    random_inputs_invariants(GLS, (10, 1), (20, 20), (20, 10), (20, 1))
+    random_inputs_invariants(GLS, (4, 1), (8, 8), (8, 4), (8, 1))
 
 
 # A.2
 def test_Optimization():
     def x_f(W, A, b, x):
-        # W: n x n (diag spd), A: m x n, b: m x 1, x: n x 1, out: n x 1
+        # W: n x n (diag spd), A: m x n, b: m x 1, x: n x 1, out: n x 1, n > m
         return W @ A.T @ np.linalg.inv(A @ W @ A.T) @ (b - A @ x)
 
     def x_o(W, A, x, c):
         # c: n x 1
         return W @ (A.T @ np.linalg.inv(A @ W @ A.T) @ A @ x - c)
 
-    # dims_W = (5, 5)
-    dims_W = (10, 10)
-    # dims_A = (10, 5)
-    dims_A = (10, 10)
-    # dims_b = (10, 1)
-    dims_b = (10, 1)
-    # dims_x = (5, 1)
-    dims_x = (10, 1)
-    # dims_c = (5, 1)
-    dims_c = (10, 1)
-    # dims_out = (5, 1)
+    dims_W = (5, 5)
+    dims_A = (3, 5)
+    dims_b = (3, 1)
+    dims_x = (5, 1)
+    dims_c = (5, 1)
     dims_out = dims_x
 
     random_inputs_invariants(x_f, dims_out, dims_W, dims_A, dims_b, dims_x)
+    random_inputs_invariants(x_f, (7, 1), (7, 7), (4, 7), (4, 1), (7, 1))
     random_inputs_invariants(x_o, dims_out, dims_W, dims_A, dims_x, dims_c)
+    random_inputs_invariants(x_o, (7, 1), (7, 7), (4, 7), (7, 1), (7, 1))
 
 
 # A.3
 def test_Signal_Processing():
-    pass
+    def SP(A, B, R, L, y):
+        # A: n x n, B: n x n, R: (n-1) x n UT, L: (n-1)x(n-1) Diag, y: n x 1
+        Ainv = np.linalg.inv(A)
+        return (
+            np.linalg.inv(Ainv.T @ B.T @ B @ Ainv + R.T @ L @ R) @ Ainv.T @ B.T @ B @ Ainv @ y
+        )
+
+    dims_A = (4, 4)
+    dims_B = dims_A
+    dims_R = (3, 4)
+    dims_L = (3, 3)
+    dims_y = (4, 1)
+    dims_out = dims_y
+
+    random_inputs_invariants(SP, dims_out, dims_A, dims_B, dims_R, dims_L, dims_y)
+    random_inputs_invariants(SP, (7, 1), (7, 7), (7, 7), (6, 7), (6, 6), (7, 1))
+
+
+def test_Ensemble_Kalman():
+    def EKF(X_b, B, H, R, Y):
+        # X_b: n x m, B: n x n, H: n x n, R: n x n spsd, Y: n x m, n > m
+        return X_b + np.linalg.inv(np.linalg.inv(B) + H.T @ np.linalg.inv(R) @ H) @ (
+            Y - H @ X_b
+        )
+
+    dims_Xb = (5, 3)
+    dims_B = (5, 5)  # wrong in paper
+    dims_H = (5, 5)
+    dims_R = (5, 5)
+    dims_Y = (5, 3)
+    dims_out = dims_Xb
+
+    random_inputs_invariants(EKF, dims_out, dims_Xb, dims_B, dims_H, dims_R, dims_Y)
+    random_inputs_invariants(EKF, (8, 6), (8, 6), (8, 8), (8, 8), (8, 8), (8, 6))
+
+
+def test_Image_Restoration(debug=False):
+    def IR(H, y, v, u, scale_mat, scale_vec):
+        # H: m x n, y: m x 1, v: n x 1, u: n x 1, n > m
+        return np.linalg.inv(H.T @ H + scale_mat) @ (H.T @ y + scale_vec * (v - u))
+
+    dims_H = (3, 5)
+    dims_y = (3, 1)
+    dims_v = (5, 1)
+    dims_u = (5, 1)
+    dims_mat = (5, 5)
+    dims_vec = (5, 1)
+    dims_out = (5, 1)
+
+    random_inputs_invariants(
+        IR, dims_out, dims_H, dims_y, dims_v, dims_u, dims_mat, dims_vec, debug=debug
+    )
 
 
 if __name__ == "__main__":
-    test_central_fd()
-    test_mma()
-    test_inv_scale()
-    test_quadric()
-    test_inverse()
-    test_gls()
-    test_Optimization()
+    # test_central_fd()
+    # test_mma()
+    test_elementwise(debug=True)
+    # test_quadric()
+    # test_inverse()
+    # test_gls()
+    # test_Optimization()
+    # test_Signal_Processing()
+    # test_Ensemble_Kalman()
+    test_Image_Restoration(debug=True)
