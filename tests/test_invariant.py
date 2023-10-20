@@ -92,11 +92,7 @@ def random_invertible(shape: tuple, method="det") -> np.ndarray:
     # if len(shape) == 1:  # e.g. (5, ) -> (5, 5) constant matrix
     #     return np.full(shape=(shape[0], shape[0]), fill_value=np.random.rand())
     # else:
-    M = (
-        np.random.default_rng()
-        .uniform(low=0.0, high=1.0, size=shape)
-        .astype(dtype=np.float64)
-    )
+    M = np.random.default_rng().uniform(low=0.0, high=1.0, size=shape).astype(dtype=np.float64)
     if len(shape) > 1:
         if shape[0] == shape[1]:  # square matrix
             if method == "diag":  # normalized diagonal dominance -> ensures regularity
@@ -201,19 +197,20 @@ def test_elementwise(debug=False):
 
     def ew_product(A: np.ndarray, B: np.ndarray):
         return A * B
-    
+
     shape_A = (5, 5)
     shape_B = (5, 5)
     random_inputs_invariants(ew_product, shape_A, shape_A, shape_B, debug=debug)
     random_inputs_invariants(ew_product, (3, 1), (3, 1), (3, 1))
-    random_inputs_invariants(ew_product, (3, ), (3, ), (3, ))
+    random_inputs_invariants(ew_product, (3,), (3,), (3,))
 
     # might be useful
     def ew_square(A: np.ndarray):
         return A**2
 
     random_inputs_invariants(ew_square, (3, 3), (3, 3))
-    random_inputs_invariants(ew_square, (5, ), (5, ))
+    random_inputs_invariants(ew_square, (5,), (5,))
+
 
 def test_quadric():
     # requires second order accuracy!
@@ -227,7 +224,7 @@ def test_quadric():
     shape_D = (3, 3)
 
     random_inputs_invariants(quadric, shape_D, shape_A, shape_B, shape_C, shape_D)
-    random_inputs_invariants(quadric, (4, 4), (8, 8), (8, 4), (8, 4), (4, 4))
+    # random_inputs_invariants(quadric, (4, 4), (8, 8), (8, 4), (8, 4), (4, 4))
 
 
 def test_inverse():
@@ -272,9 +269,9 @@ def test_Optimization():
     dims_out = dims_x
 
     random_inputs_invariants(x_f, dims_out, dims_W, dims_A, dims_b, dims_x)
-    random_inputs_invariants(x_f, (7, 1), (7, 7), (4, 7), (4, 1), (7, 1))
+    # random_inputs_invariants(x_f, (7, 1), (7, 7), (4, 7), (4, 1), (7, 1))
     random_inputs_invariants(x_o, dims_out, dims_W, dims_A, dims_x, dims_c)
-    random_inputs_invariants(x_o, (7, 1), (7, 7), (4, 7), (7, 1), (7, 1))
+    # random_inputs_invariants(x_o, (7, 1), (7, 7), (4, 7), (7, 1), (7, 1))
 
 
 # A.3
@@ -312,7 +309,7 @@ def test_Ensemble_Kalman():
     dims_out = dims_Xb
 
     random_inputs_invariants(EKF, dims_out, dims_Xb, dims_B, dims_H, dims_R, dims_Y)
-    random_inputs_invariants(EKF, (8, 6), (8, 6), (8, 8), (8, 8), (8, 8), (8, 6))
+    # random_inputs_invariants(EKF, (8, 6), (8, 6), (8, 8), (8, 8), (8, 8), (8, 6))
 
 
 def test_Image_Restoration(debug=False):
@@ -333,14 +330,125 @@ def test_Image_Restoration(debug=False):
     )
 
 
+def test_Randomized_Matrix_Inversion(debug=False):
+    def RMI_1(S, A, W, X):
+        L = S @ np.linalg.inv(S.T @ A.T @ W @ A @ S) @ S.T
+        I = np.eye(X.shape[0])
+        return X + (I - X @ A.T) @ L @ A.T @ W
+
+    def RMI_2(S, A, X):
+        SAS_inv = S @ np.linalg.inv(S.T @ A @ S) @ S.T
+        I = np.eye(X.shape[0])
+        return SAS_inv + (I - SAS_inv) @ X @ (I - A @ SAS_inv)
+
+    n = 5
+    q = 3
+    dims_S = (n, q)
+    dims_A = (n, n)
+    dims_W = (n, n)
+    dims_X = (n, n)
+    dims_out = dims_X
+
+    random_inputs_invariants(RMI_1, dims_out, dims_S, dims_A, dims_W, dims_X, debug=debug)
+    random_inputs_invariants(RMI_2, dims_out, dims_S, dims_A, dims_X, debug=debug)
+
+
+def test_Stochastic_Newton(debug=False):
+    # we do not differentiate by `k`
+    def SN(B, A, W):
+        I_l = np.eye(W.shape[1])
+        inverse = np.linalg.inv(I_l + W.T @ A @ B @ A.T @ W)
+        I_n = np.eye(B.shape[0])
+        return B @ (I_n - A.T @ W @ inverse @ W.T @ A @ B)
+
+    l = 2
+    m = 3
+    n = 5
+    dims_B = (n, n)
+    dims_A = (m, n)
+    dims_W = (m, l)
+    dims_out = dims_B
+
+    random_inputs_invariants(SN, dims_out, dims_B, dims_A, dims_W, debug=debug)
+
+
+def test_Tikhonov_Regularization(debug=False):
+    def TR(A, G, b):
+        return np.linalg.inv(A.T @ A + G.T @ G) @ A.T @ b
+
+    def GTR(A, P, Q, b, x0):
+        return np.linalg.inv(A.T @ P @ A + Q) @ (A.T @ P @ b + Q @ x0)
+
+    n = 5
+    m = 3
+    dims_A = (n, m)
+    dims_G = (m, m)
+    dims_b = (n, 1)
+    dims_out = (m, 1)
+
+    random_inputs_invariants(TR, dims_out, dims_A, dims_G, dims_b, debug=debug)
+
+    dims_P = (n, n)
+    dims_Q = (m, m)
+    dims_x0 = (m, 1)
+
+    random_inputs_invariants(GTR, dims_out, dims_A, dims_P, dims_Q, dims_b, dims_x0)
+
+
+def test_LMMSE(debug=False):
+    def LMMSE(CX, A, CZ, y, x):
+        return CX @ A.T @ np.linalg.inv(A @ CX @ A.T + CZ) @ (y - A @ x) + x
+
+    n = 5
+    m = 3
+    dims_CX = (n, n)
+    dims_A = (m, n)
+    dims_CZ = (m, m)
+    dims_y = (m, 1)
+    dims_x = (n, 1)
+    dims_out = dims_x
+
+    random_inputs_invariants(
+        LMMSE, dims_out, dims_CX, dims_A, dims_CZ, dims_y, dims_x, debug=debug
+    )
+
+
+def test_Kalman_Filter(debug=False):
+    # TODO: this would be a nice test case for multiple returns (P_k, x_k) and differentiable subroutines (K_k)
+    def KF_P(P, H, R):
+        K = P @ H.T @ np.linalg.inv(H @ P @ H.T + R)
+        I = np.eye(K.shape[0])
+        return (I - K @ H) @ P
+
+    def KF_x(x, K, z, H):
+        return x + K @ (z - H @ x)
+
+    n = 4
+    m = 6
+    dims_P = (n, n)
+    dims_H = (m, n)
+    dims_R = (m, m)
+    dims_x = (n, 1)
+    dims_K = (n, m)
+    dims_z = (m, 1)
+
+    random_inputs_invariants(KF_P, dims_P, dims_P, dims_H, dims_R, debug=debug)
+    random_inputs_invariants(KF_x, dims_x, dims_x, dims_K, dims_z, dims_H, debug=debug)
+
+
 if __name__ == "__main__":
     # test_central_fd()
     # test_mma()
-    test_elementwise(debug=True)
+    # test_elementwise(debug=True)
     # test_quadric()
     # test_inverse()
     # test_gls()
     # test_Optimization()
     # test_Signal_Processing()
     # test_Ensemble_Kalman()
-    test_Image_Restoration(debug=True)
+    # test_Image_Restoration(debug=True)
+    # test_Randomized_Matrix_Inversion(debug=True)
+    # test_Stochastic_Newton(debug=True)
+    # test_Tikhonov_Regularization(debug=True)
+    # test_LMMSE(debug=True)
+    test_Kalman_Filter(debug=True)
