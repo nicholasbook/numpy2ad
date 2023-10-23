@@ -58,9 +58,8 @@ A pure Python package for *source-to-source* transformation of Numpy matrix expr
 
 
 # Install
-Coming soon...
 ```bash
-$ pip install numpy2ad
+$ python -m pip install numpy2ad
 ```
 
 # Supported Matrix Operations
