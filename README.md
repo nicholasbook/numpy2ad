@@ -1,15 +1,19 @@
-## Numpy2AD
+# Numpy2AD
 
-A Python package for *source-to-source* transformation of Numpy matrix expressions to reverse-mode, also referred to as *adjoint*, algorithmic differentiation code.
+A pure Python package for *source-to-source* transformation of Numpy matrix expressions to [reverse-mode](https://en.wikipedia.org/wiki/Automatic_differentiation#Reverse_accumulation), also referred to as *adjoint*, algorithmic differentiation code.
+
+*Algorithmic / Automatic Differentiation* is the state of the art for computing derivatives in many fields of application, e.g. computational engineering, finance, and machine learning (backpropagation). For more details, [this book](https://epubs.siam.org/doi/10.1137/1.9781611972078) is a good entry point to the subject.
+
 # Usage
-**Numpy2AD** offers two modes of code transformation.
+**Numpy2AD** offers two modes of adjoint code generation.
+
 1. In *Expression Mode* a given Numpy matrix expression string, e.g.
     ```python
     from numpy2ad import transform_expr
     
     print(transform_expr("D = A @ B + C"))
     ```
-    is transformed to its reverse-mode (adjoint) differentiation code:
+    is transformed to its reverse-mode differentiation code:
     ```python
     """
     v0 = A @ B
@@ -22,6 +26,7 @@ A Python package for *source-to-source* transformation of Numpy matrix expressio
     """
     ```
     The generated code can be easily pasted into the desired context, e.g. a Jupyter notebook, where the adjoints (partial derivatives) `A_a`, `B_a`, `C_a`, and `D_a` are initialized. Expression mode is best suited for quick scripting and debugging. 
+
 2. In *Function Mode* a given function, e.g.
     ```python
     def mma(A, B, C):
@@ -49,9 +54,8 @@ A Python package for *source-to-source* transformation of Numpy matrix expressio
     """
     ```
     
-    The transformed code can be conveniently exported as a module with the argument `out_file=...` for validation and easier integration into existing packages.
+    The transformed code can also be conveniently exported as a Python module with the argument `out_file=...` for validation and easier integration into your existing workflows.
 
-*Algorithmic Differentiation* is the state of the art for sensitivity analysis and optimization in many fields of application, e.g. computational engineering, finance, and machine learning. For more information,  [this book](https://epubs.siam.org/doi/10.1137/1.9781611972078) is a good entry point to the subject.
 
 # Install
 Coming soon...
@@ -108,7 +112,7 @@ Furthermore, there are some simple runtime benchmarks for the *MMA* and *GLS* mo
     ```
 
 # Acknowledgements
-This package was developed by Nicholas Book as part of a Master's seminar thesis under the supervision and close collaboration of Uwe Naumann and Simon Märtens (STCE, RWTH Aachen University, Germany).
+This package was developed by Nicholas Book in close collaboration with Prof. Uwe Naumann and Simon Märtens of [STCE](https://www.stce.rwth-aachen.de/) at RWTH Aachen University, Germany.
 
 # License
-MIT License.
+MIT License, see `LICENSE.txt`.

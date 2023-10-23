@@ -1,14 +1,12 @@
 import ast
-from copy import copy
 from .derivatives import *
 from .base_transformer import AdjointTransformer
 
 
 class ExpressionTransformer(AdjointTransformer):
     """
-    This AST transformer takes a given expression e.g. "D = A @ B + C"
-    and transforms the primal section to SAC
-    and inserts a reverse section with Adjoint code.
+    This AST transformer takes a given expression e.g. "D = A @ B + C",
+    transforms the primal section to SAC, and inserts a reverse section with adjoint code.
 
     Original variable names are left unchanged and their adjoints are assumed to be defined.
     """
@@ -48,9 +46,7 @@ class ExpressionTransformer(AdjointTransformer):
     def visit_Constant(self, node: ast.Constant) -> ast.Name:
         """generates SAC for constant assignment and returns the newly assigned v_i"""
         new_v = self._generate_SAC(node)
-        self._generate_ad_SAC(
-            ast.Constant(value=0.0), self._make_ad_target(new_v), True
-        )
+        self._generate_ad_SAC(ast.Constant(value=0.0), self._make_ad_target(new_v), True)
         return new_v
 
     def visit_Module(self, node: ast.Module) -> ast.Module:

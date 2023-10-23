@@ -1,5 +1,5 @@
 import ast
-from copy import copy, deepcopy
+from copy import copy
 import re
 from .derivatives import *
 
@@ -344,7 +344,7 @@ class AdjointTransformer(ast.NodeTransformer):
         # also in the case of nested rhs e.g. D = A @ B + C -> v0 = A @ B; D = v0 + C
         # this requires custom logic to keep certain variable names unchanged
         # in general BinOps / Calls generate their own (AD) SAC (context-free)
-        # so we pass 'D' to the top level rhs expression as 'assign_target'
+        # so we store 'D' for the top level rhs expression as 'assign_target'
 
         self.assign_target = copy(node.targets[0])
 
@@ -359,7 +359,7 @@ class AdjointTransformer(ast.NodeTransformer):
     def visit_AugAssign(self, node: ast.AugAssign):
         # overwriting of variables must be dealt with
         # e.g. A += B <=> A = A + B => v = A; A = v + B => B_a += A_a; v_a += A_a; A_a += v_a
-        pass
+        raise NotImplementedError()
         # if isinstance(node.op, ast.Add):  # A += A
         #     rhs = ast.BinOp(op=ast.Add(), left=self._make_ctx_load(
         #         node.target), right=node.value)  # A + A
