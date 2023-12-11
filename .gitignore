@@ -13,3 +13,6 @@ tmp.ipynb
 
 benchmarks/benchmarks.md
 benchmarks/benchmarks.pdf
+.DS_Store
+demo/latex
+dist/
