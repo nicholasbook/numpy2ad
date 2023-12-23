@@ -47,7 +47,7 @@ class AdjointTransformer(ast.NodeTransformer):
         return self._make_call(
             func=self._make_attribute(value="np", attr="zeros_like"),
             args=[self._make_ctx_load(var)],
-        )  # this does not work for scalars !! # TODO: use np.zeros_like
+        )  # this does not work for scalars !!
 
     def _make_ctx_load(self, node: ast.Name) -> ast.Name:
         new_node = copy(node)
@@ -309,6 +309,10 @@ class AdjointTransformer(ast.NodeTransformer):
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.Name:
         if node.attr == "T":
+            # we need to be really careful with transposes as numpy generally returns a 'view'
+            # reference semantics lead to aliasing! both variables can modify each other
+            # e.g. v0 = X.T -> v0_a = X_a.T
+            # TODO: can we leave X.T in the SAC?
             if isinstance(node.value, ast.Name):  # A^T
                 orig_id = node.value.id
                 new_v = self.var_table.get(orig_id + "_T", None)  # lookup
@@ -358,11 +362,6 @@ class AdjointTransformer(ast.NodeTransformer):
 
     def visit_AugAssign(self, node: ast.AugAssign):
         # overwriting of variables must be dealt with
-        # e.g. A += B <=> A = A + B => v = A; A = v + B => B_a += A_a; v_a += A_a; A_a += v_a
+        # e.g. A += B <=> A = A + B => v = A.copy(); A = v + B => B_a += A_a; v_a += A_a; A_a += v_a
+        # correctness is not really an issue in the linear case (additive)
         raise NotImplementedError()
-        # if isinstance(node.op, ast.Add):  # A += A
-        #     rhs = ast.BinOp(op=ast.Add(), left=self._make_ctx_load(
-        #         node.target), right=node.value)  # A + A
-        #     new_v = self.visit(rhs)  # generate SAC
-        #     self.var_table[node.target.id] = new_v.id  # ??
-        # return None  # remove?

@@ -30,9 +30,7 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
         case ast.Add:  # c = l + r
             return ast.Expr(value=ast.Constant(value=1.0))
         case ast.Sub:  # c = l - r
-            return ast.Expr(
-                value=ast.Constant(value=(1.0 if wrt is WithRespectTo.Left else -1.0))
-            )
+            return ast.Expr(value=ast.Constant(value=(1.0 if wrt is WithRespectTo.Left else -1.0)))
         case ast.Mult:  # c = l * r
             return ast.Expr(value=(node.right if wrt is WithRespectTo.Left else node.left))
         case ast.Div:  # c = a / b -> 1/b or -a / b**2
@@ -43,9 +41,7 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
                     else ast.BinOp(
                         op=ast.Div(),
                         left=ast.UnaryOp(op=ast.USub(), operand=node.left),
-                        right=ast.BinOp(
-                            op=ast.Pow(), left=node.right, right=ast.Constant(value=2)
-                        ),
+                        right=ast.BinOp(op=ast.Pow(), left=node.right, right=ast.Constant(value=2)),
                     )
                 )
             )
@@ -74,16 +70,10 @@ def derivative_BinOp(node: ast.BinOp, wrt: WithRespectTo) -> ast.Expr:
 
 def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
     func = call.func.attr  # e.g. "exp"
-
-    # def _make_numpy_Call(type: str, args: list):
-    #     # required: args and keywords
-    #     function = ast.Attribute(value="numpy", attr=type, ctx=ast.Load())
-    #     return ast.Call(func=function, args=args, keywords=[])
-
     match func:
         case "inv":  # numpy.linalg.inv
             assert call.func.value.attr == "linalg"
-            # B = A^-1 -> A_a += -A^-T @ B_a @ A^-T
+            # Y = A^-1 -> A_a += -A^-T @ Y_a @ A^-T
             A_inv = ast.Name(id="A_inv", ctx=ast.Load())
             A_inv_T = ast.Attribute(attr="T", ctx=ast.Load(), value=A_inv)
             B_a = ast.Name(id="B_a", ctx=ast.Load())
@@ -111,26 +101,16 @@ def derivative_Call(call: ast.Call, wrt_arg: int) -> ast.Expr:
                 divide = deepcopy(call.func)
                 divide.attr = "divide"
 
-                return ast.Expr(
-                    value=ast.Call(func=divide, args=[minus_a, b_squared], keywords=[])
-                )
+                return ast.Expr(value=ast.Call(func=divide, args=[minus_a, b_squared], keywords=[]))
         case "square":  # x^2
             mult = deepcopy(call.func)
             mult.attr = "multiply"
             return ast.Expr(
-                value=ast.Call(
-                    func=mult, args=[call.args[0], ast.Constant(value=2.0)], keywords=[]
-                )
+                value=ast.Call(func=mult, args=[call.args[0], ast.Constant(value=2.0)], keywords=[])
             )
         case "ones":
             return None
         case "zeros":
-            return None
-        case "transpose":
-            return None
-        case "full":
-            return None
-        case "diag":
             return None
         case "eye":
             return None
