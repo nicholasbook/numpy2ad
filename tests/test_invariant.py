@@ -191,6 +191,18 @@ def test_mma():
     random_inputs_invariants(mma, (5, 5), (5, 15), (15, 5), (5, 5))
 
 
+def test_dot(debug=False):
+    def dot(a, b):
+        out = a.T @ b
+        return out
+
+    shape = (3, 1)
+    out_shape = (1, 1)
+
+    random_inputs_invariants(dot, out_shape, shape, shape, debug=debug)
+    random_inputs_invariants(dot, (3, 3), (1, 3), (1, 3), debug=debug)  # outer product
+
+
 def test_elementwise(debug=False):
     # we want to support elementwise matrix-matrix and vector-vector multiplications
     # as they occur in the form of regularization terms in matrix problems
@@ -439,6 +451,7 @@ def test_Kalman_Filter(debug=False):
 if __name__ == "__main__":
     test_central_fd()
     test_mma()
+    test_dot()
     test_elementwise()
     test_quadric()
     test_inverse()

@@ -28,7 +28,7 @@ class FunctionTransformer(AdjointTransformer):
     def __init__(self) -> None:
         super().__init__()
         self.return_list = list()
-        
+
     def visit_BinOp(self, node: ast.BinOp) -> ast.Name:
         """Recursively visits binary operation and generates SAC until it resolves to single-variables.
 
@@ -69,7 +69,7 @@ class FunctionTransformer(AdjointTransformer):
                 self.assign_target is not None
                 and self.call_depth == 0
                 and self.binop_depth == 0
-            ):
+            ):  # e.g. I = np.eye(n)
                 assert self.return_target is None
                 new_v = self.assign_target
                 self.primal_stack.append(ast.Assign(targets=[new_v], value=node))
@@ -78,6 +78,7 @@ class FunctionTransformer(AdjointTransformer):
                 )
                 self.assign_target = None
             elif self.return_target is not None and isinstance(self.return_target, ast.Call):
+                # e.g. return np.eye(n) ? does not make sense
                 raise NotImplementedError
                 assert self.assign_target is None
                 new_v = ast.Name(id=self.out_id, ctx=ast.Store())

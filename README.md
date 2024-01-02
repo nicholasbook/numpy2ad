@@ -9,9 +9,8 @@ A pure Python package for *source-to-source* transformation of Numpy matrix expr
 
 1. In *Expression Mode* a given Numpy matrix expression string, e.g.
     ```python
-    from numpy2ad import transform_expr
-    
-    print(transform_expr("D = A @ B + C"))
+    >>> from numpy2ad import transform_expr
+    >>> print(transform_expr("D = A @ B + C"))
     ```
     is transformed to its reverse-mode differentiation code:
     ```python
@@ -34,9 +33,8 @@ A pure Python package for *source-to-source* transformation of Numpy matrix expr
     ```
     is transformed to its adjoint function with modified signature:
     ```python
-    from numpy2ad import transform
-
-    print(transform(mma))
+    >>> from numpy2ad import transform
+    >>> print(transform(mma))
     ```
     ```python
     """
@@ -64,12 +62,12 @@ $ python -m pip install numpy2ad
 
 # Supported Matrix Operations
 
-**Numpy2Ad** currently supports a limited but broadly applicable subset of Numpy matrix operations. We define a "matrix" as a two-dimensional `numpy.ndarray`. If not further specified, the operations are also valid for one-dimensional "vectors".
+**Numpy2Ad** currently supports a limited but broadly applicable subset of Numpy matrix operations. We define a "matrix" as a two-dimensional `numpy.ndarray`. If not further specified, the operations are also valid for column vectors with shape `(N, 1)`.
 
 - Matrix **Addition** `C = A + B` and **Subtraction** `C = A - B`
 - Matrix (Inner) **Products** `C = A @ B`
-    - Exception: Inner products between two vectors `c = a @ b` as they result in a scalar.
-- Matrix **Inverse** `B = np.linalg.inv(A)`
+    - Note: the dot product of two vectors must be expressed as `c = a.T @ b`.
+- (Square) Matrix **Inverse** `B = np.linalg.inv(A)`
 - Matrix **Transpose** `B = A.T`
 - **Element-wise** product `C = A * B`
     - Note that dimension of `A` and `B` must match. Numpy's broadcasting rules are **not** considered during code generation, e.g. multiplying a scalar variable by a matrix will lead to **incorrect** derivative code.
