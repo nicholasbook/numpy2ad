@@ -73,38 +73,41 @@ def benchmark_gls_cfd(X, M, y):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")  # runs each benchmark only once
+    parser.add_argument("--full", action="store_true")
     parser.add_argument("--target_time", type=float)  # in seconds (ignored when --once is set)
     args = parser.parse_args()
 
     # generate GLS_ad
     exec(compile(transform(GLS), filename="<ast>", mode="exec"))
 
-    num_measures = 20
+    num_measures = 25
 
     # we want every run to take approx the same time in total, e.g. one minute
     # it scales as O(n^3) with some unknown constant
     num_rows_fwd_rev = (
-        np.logspace(start=6.0, stop=12.0, num=num_measures, endpoint=True, base=2.0)
+        np.logspace(start=6.0, stop=13.0, num=num_measures, endpoint=True, base=2.0)
         .round()
         .astype(int)
-    )  # 2**6 = 64, 2**12 = 4096
+    )  # 2**6 = 64, 2**13 = 8192
 
     ###### adjust this for your machine ######
     # set avg_over to 1 and adjust constants with worst s/iter
-    goal_time = args.target_time if args.target_time is not None else 30.0  # seconds
+    goal_time = args.target_time if args.target_time is not None else 10.0  # seconds
 
-    start = goal_time / (0.0003)  # N=64
-    stop = goal_time / (3.0)  # N=4096
+    start = goal_time / (0.0002)  # N=64
+    stop = goal_time / (9.4)  # N=8192
+
+    ##########################################
 
     avg_over = (
         np.ones_like(num_rows_fwd_rev, dtype=int)
         if args.once
         else np.logspace(
-            start=np.log10(start).round(),
-            stop=np.log10(stop).round(),
+            start=np.log2(start),
+            stop=np.log2(stop),
             num=num_measures,
             endpoint=True,
-            base=10.0,
+            base=2.0,
         )
     )
     factor = 1.0  # optional
@@ -144,12 +147,16 @@ if __name__ == "__main__":
         for _ in range(average_over // 10):
             benchmark_gls_ad(X, M, y, GLS_ad)
 
+        # repeated = []
+        # for _ in range(5):
         gls_ad_result = timeit.timeit(
             "benchmark_gls_ad(X, M, y, GLS_ad)",
             setup="from __main__ import benchmark_gls_ad",
             globals=locals(),
             number=average_over,
         )
+            # repeated.append(gls_ad_result)
+        # print(repeated)
         print(
             f"Adjoint with {rows=} took {gls_ad_result}s ({gls_ad_result / average_over} s/iter)."
         )
@@ -182,81 +189,82 @@ if __name__ == "__main__":
 
     # --------- full Jacobian ----------
 
-    num_rows_full = (
-        np.logspace(start=3.0, stop=7.0, num=num_measures, endpoint=True, base=2.0)
-        .round()
-        .astype(int)
-    )  # 2**3 = 8, 2**7 = 128
+    if args.full:
+        num_rows_full = (
+            np.logspace(start=3.0, stop=7.0, num=num_measures, endpoint=True, base=2.0)
+            .round()
+            .astype(int)
+        )  # 2**3 = 8, 2**7 = 128
 
-    ###### adjust this for your machine ######
-    # set avg_over to 1 and adjust constants with worst s/iter
-    start = goal_time / (0.006)  # N=8
-    stop = goal_time / (15.0)  # N=
+        ###### adjust this for your machine ######
+        # set avg_over to 1 and adjust constants with worst s/iter
+        start = goal_time / (0.006)  # N=8
+        stop = goal_time / (15.0)  # N=
 
-    avg_over = (
-        np.ones_like(num_rows_full, dtype=int)
-        if args.once
-        else np.logspace(
-            start=np.log10(start).round(),
-            stop=np.log10(stop).round(),
-            num=num_measures,
-            endpoint=True,
-            base=10.0,
+        avg_over = (
+            np.ones_like(num_rows_full, dtype=int)
+            if args.once
+            else np.logspace(
+                start=np.log10(start).round(),
+                stop=np.log10(stop).round(),
+                num=num_measures,
+                endpoint=True,
+                base=10.0,
+            )
         )
-    )
-    factor = 1.0  # optional
+        factor = 1.0  # optional
 
-    results_full = np.zeros(shape=(len(num_rows_full), 4))  # rows | adjoint | cfd | rel cost
+        results_full = np.zeros(shape=(len(num_rows_full), 4))  # rows | adjoint | cfd | rel cost
 
-    for i, rows in enumerate(num_rows_full):
-        average_over = int(factor * avg_over[i])
+        for i, rows in enumerate(num_rows_full):
+            average_over = int(factor * avg_over[i])
 
-        X = np.random.rand(rows, rows // 8)
-        M = np.random.rand(rows, rows)
-        row_sum = np.sum(np.abs(M), axis=1)
-        np.fill_diagonal(M, row_sum)
-        M /= np.max(M)
-        y = np.random.rand(rows, 1)
+            X = np.random.rand(rows, rows // 8)
+            M = np.random.rand(rows, rows)
+            row_sum = np.sum(np.abs(M), axis=1)
+            np.fill_diagonal(M, row_sum)
+            M /= np.max(M)
+            y = np.random.rand(rows, 1)
 
-        print(f"Running full Jacobian for {average_over=}...")
+            print(f"Running full Jacobian for {average_over=}...")
 
-        # adjoint full jacobian
-        # warm up
-        for _ in range(average_over // 10):
-            benchmark_gls_ad_full(X, M, y, GLS_ad)
+            # adjoint full jacobian
+            # warm up
+            for _ in range(average_over // 10):
+                benchmark_gls_ad_full(X, M, y, GLS_ad)
 
-        gls_ad_full_result = timeit.timeit(
-            "benchmark_gls_ad_full(X, M, y, GLS_ad)",
-            setup="from __main__ import benchmark_gls_ad_full",
-            globals=locals(),
-            number=average_over,
-        )
-        print(
-            f"Adjoint full Jacobian with {rows=} took {gls_ad_full_result}s ({gls_ad_full_result / average_over} s/iter)."
-        )
+            gls_ad_full_result = timeit.timeit(
+                "benchmark_gls_ad_full(X, M, y, GLS_ad)",
+                setup="from __main__ import benchmark_gls_ad_full",
+                globals=locals(),
+                number=average_over,
+            )
+            print(
+                f"Adjoint full Jacobian with {rows=} took {gls_ad_full_result}s ({gls_ad_full_result / average_over} s/iter)."
+            )
 
-        # cfd full jacobian
-        # warm up
-        for _ in range(average_over // 10):
-            benchmark_gls_cfd(X, M, y)
+            # cfd full jacobian
+            # warm up
+            for _ in range(average_over // 10):
+                benchmark_gls_cfd(X, M, y)
 
-        gls_cfd_result = timeit.timeit(
-            "benchmark_gls_cfd(X, M, y)",
-            setup="from __main__ import benchmark_gls_cfd",
-            globals=locals(),
-            number=average_over,
-        )
-        print(
-            f"CFD full Jacobian with {rows=} took {gls_cfd_result}s ({gls_cfd_result / average_over} s/iter)."
-        )
+            gls_cfd_result = timeit.timeit(
+                "benchmark_gls_cfd(X, M, y)",
+                setup="from __main__ import benchmark_gls_cfd",
+                globals=locals(),
+                number=average_over,
+            )
+            print(
+                f"CFD full Jacobian with {rows=} took {gls_cfd_result}s ({gls_cfd_result / average_over} s/iter)."
+            )
 
-        print("")
+            print("")
 
-        results_full[i, :] = [
-            rows,
-            gls_ad_full_result / average_over,  # avg. full jacobian
-            gls_cfd_result / average_over,  # avg. full tangent jacobian
-            gls_cfd_result / gls_ad_full_result,  # relative cost of tangent approximation
-        ]
+            results_full[i, :] = [
+                rows,
+                gls_ad_full_result / average_over,  # avg. full jacobian
+                gls_cfd_result / average_over,  # avg. full tangent jacobian
+                gls_cfd_result / gls_ad_full_result,  # relative cost of tangent approximation
+            ]
 
-    np.savetxt("results/timeit_gls_full.txt", results_full)
+        np.savetxt("results/timeit_gls_full.txt", results_full)
