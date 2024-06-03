@@ -1,5 +1,5 @@
 import ast
-import graphviz as viz
+from graphviz import Digraph
 import inspect
 import subprocess
 import pathlib
@@ -11,7 +11,7 @@ class RecordGraphVisitor(ast.NodeVisitor):
     """Recursive node visitor"""
 
     def __init__(self):
-        self.graph = viz.Digraph()
+        self.graph = Digraph()
         self.print_attr = ["name", "id", "arg", "op", "attr"]
 
         # global counters for unique node ids
@@ -120,7 +120,7 @@ class RecordMinimalGraphVisitor(ast.NodeVisitor):
     """Recursive node visitor with minimal node text"""
 
     def __init__(self):
-        self.graph = viz.Digraph()
+        self.graph = Digraph()
 
         # minimal nodes
         self.minimal_ops = {
@@ -263,7 +263,7 @@ class RecordMinimalGraphVisitor(ast.NodeVisitor):
         pass
 
 
-def draw_AST(function: Union[str, Callable], export=False, minimal=False):
+def draw_AST(function: Union[str, Callable], export=False, minimal=False) -> Digraph:
     """Draws the given AST in a Jupyter Notebook Cell. Requires `graphviz` and `dot` to be installed.
     Args:
         function (str or function): Python expression or function object
@@ -279,6 +279,8 @@ def draw_AST(function: Union[str, Callable], export=False, minimal=False):
     vis.visit(tree)
 
     if export:
+        vis.body.append("margin=0;")
+
         path = pathlib.Path("./graph.dot")
         with open(path, "w") as out:
             out.write(vis.graph.source)
