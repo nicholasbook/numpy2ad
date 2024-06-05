@@ -1,7 +1,9 @@
 import numpy as np
+import scipy.linalg
 from numpy2ad import transform
 import timeit
 import argparse
+import scipy
 
 
 def GLS(X, M, y):
@@ -70,11 +72,30 @@ def benchmark_gls_cfd(X, M, y):
             dydx = central_fd(GLS, X, M, y, wrt=wrt, index=index)
 
 
+def GLS_cholesky(X, M, y):
+    L0 = np.linalg.cholesky(M)
+    v0 = scipy.linalg.solve_triangular(a=L0, b=X, trans="T", lower=True)  # v0.T = X^T L^-1
+    v1 = v0.T  # "\tilde{X}"
+    v2 = v1 @ v0  # X^T L^-1 (X^T L^-1)^T
+    L1 = np.linalg.cholesky(v2)  # "\tilde{L}"
+    v3 = scipy.linalg.solve_triangular(a=L1, b=v1, lower=True)  # "z"
+    v4 = scipy.linalg.solve_triangular(a=L1, b=v3, trans="T", lower=True)  # "Z"
+    v5 = v4.T
+    v6 = scipy.linalg.solve_triangular(a=L0, b=v5, lower=True)
+    v7 = v6.T  # "\tilde{Z}"
+    return v7 @ y
+
+
+def benchmark_gls_cholesky(X, M, y):
+    _ = GLS_cholesky(X, M, y)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")  # runs each benchmark only once
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--target_time", type=float)  # in seconds (ignored when --once is set)
+    parser.add_argument("--cholesky", action="store_true")
     args = parser.parse_args()
 
     # generate GLS_ad
@@ -115,6 +136,7 @@ if __name__ == "__main__":
     results_fwd_rev = np.zeros(
         shape=(len(num_rows_fwd_rev), 6)
     )  # rows | fwd | fwd & rev | rel cost | fd | rel cost fd
+    results_cholesky = np.zeros((len(num_rows_fwd_rev), 3))  # rows | GLS | GLS_cholesky
 
     for i, rows in enumerate(num_rows_fwd_rev):
         average_over = int(factor * avg_over[i])
@@ -124,9 +146,12 @@ if __name__ == "__main__":
         # initialize
         X = np.random.rand(rows, rows // 8)  # normally way less columns
         M = np.random.rand(rows, rows)
-        row_sum = np.sum(np.abs(M), axis=1)
-        np.fill_diagonal(M, row_sum)
-        M /= np.max(M)
+        if args.cholesky:
+            M = 0.5 * (M + M.T) + rows * np.eye(rows)
+        else:
+            row_sum = np.sum(np.abs(M), axis=1)
+            np.fill_diagonal(M, row_sum)
+            M /= np.max(M)
         y = np.random.rand(rows, 1)
 
         # forward pass
@@ -142,21 +167,38 @@ if __name__ == "__main__":
         )
         print(f"GLS with {rows=} took {gls_result}s ({gls_result / average_over} s/iter).")
 
+        if args.cholesky:
+            # warm up
+            for _ in range(average_over // 10):
+                benchmark_gls_cholesky(X, M, y)
+
+            gls_cholesky_result = timeit.timeit(
+                "benchmark_gls_cholesky(X, M, y)",
+                setup="from __main__ import benchmark_gls_cholesky, GLS_cholesky",
+                globals=locals(),
+                number=average_over,
+            )
+            print(
+                f"GLS (Cholesky) with {rows=} took {gls_cholesky_result}s ({gls_cholesky_result / average_over} s/iter)."
+            )
+            results_cholesky[i, :] = [
+                rows,
+                gls_result / average_over,
+                gls_cholesky_result / average_over,
+            ]
+
         # transformed code
+
         # warm up
         for _ in range(average_over // 10):
             benchmark_gls_ad(X, M, y, GLS_ad)
 
-        # repeated = []
-        # for _ in range(5):
         gls_ad_result = timeit.timeit(
             "benchmark_gls_ad(X, M, y, GLS_ad)",
             setup="from __main__ import benchmark_gls_ad",
             globals=locals(),
             number=average_over,
         )
-            # repeated.append(gls_ad_result)
-        # print(repeated)
         print(
             f"Adjoint with {rows=} took {gls_ad_result}s ({gls_ad_result / average_over} s/iter)."
         )
@@ -186,10 +228,13 @@ if __name__ == "__main__":
         print("")
 
     np.savetxt("results/timeit_gls_fwd_rev.txt", results_fwd_rev)
+    if args.cholesky:
+        np.savetxt("results/timeit_gls_cholesky.txt", results_cholesky)
 
-    # --------- full Jacobian ----------
+    # --------- full Jacobian (very slow) ----------
 
     if args.full:
+
         num_rows_full = (
             np.logspace(start=3.0, stop=7.0, num=num_measures, endpoint=True, base=2.0)
             .round()
@@ -199,7 +244,7 @@ if __name__ == "__main__":
         ###### adjust this for your machine ######
         # set avg_over to 1 and adjust constants with worst s/iter
         start = goal_time / (0.006)  # N=8
-        stop = goal_time / (15.0)  # N=
+        stop = goal_time / (15.0)  # N=128
 
         avg_over = (
             np.ones_like(num_rows_full, dtype=int)
@@ -214,7 +259,9 @@ if __name__ == "__main__":
         )
         factor = 1.0  # optional
 
-        results_full = np.zeros(shape=(len(num_rows_full), 4))  # rows | adjoint | cfd | rel cost
+        results_full = np.zeros(
+            shape=(len(num_rows_full), 4)
+        )  # rows | adjoint | cfd | rel cost
 
         for i, rows in enumerate(num_rows_full):
             average_over = int(factor * avg_over[i])
