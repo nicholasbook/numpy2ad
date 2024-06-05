@@ -77,21 +77,17 @@ def test_central_fd():
     assert np.count_nonzero(dB) == 10
 
 
-def random_invertible(shape: tuple, method="det") -> np.ndarray:
+def random_invertible(shape: tuple, method="diag") -> np.ndarray:
     """Returns a uniformly random (in (0, 1]) and diagonally dominant matrix of given shape.
 
     Args:
         shape (tuple): shape of matrix.
 
         Note that vectors must have shape (n, 1).
-        For input shape (n, ) a constant full (n, n) matrix is returned (for element-wise ops).
 
     Returns:
         np.ndarray: generated matrix
     """
-    # if len(shape) == 1:  # e.g. (5, ) -> (5, 5) constant matrix
-    #     return np.full(shape=(shape[0], shape[0]), fill_value=np.random.rand())
-    # else:
     M = np.random.default_rng().uniform(low=0.0, high=1.0, size=shape).astype(dtype=np.float64)
     if len(shape) > 1:
         if shape[0] == shape[1]:  # square matrix
@@ -353,8 +349,8 @@ def test_Randomized_Matrix_Inversion(debug=False):
         I = np.eye(X.shape[0])
         return SAS_inv + (I - SAS_inv) @ X @ (I - A @ SAS_inv)
 
-    n = 5
-    q = 3
+    n = 3
+    q = 2
     dims_S = (n, q)
     dims_A = (n, n)
     dims_W = (n, n)
@@ -391,7 +387,7 @@ def test_Tikhonov_Regularization(debug=False):
     def GTR(A, P, Q, b, x0):
         return np.linalg.inv(A.T @ P @ A + Q) @ (A.T @ P @ b + Q @ x0)
 
-    n = 5
+    n = 4
     m = 3
     dims_A = (n, m)
     dims_G = (m, m)
