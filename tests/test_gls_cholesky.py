@@ -83,20 +83,22 @@ def GLS_cholesky_ad(X, M, y, X_a, M_a, y_a, out_a):
     v4_a = v5_a.T
 
     v3_a = scipy.linalg.solve_triangular(a=L1, b=v4_a, lower=True)  # \tilde{L} z_a = Z_a
-    L1_a = np.tril(-v4 @ v3_a.T)
+    # L1_a = np.tril(-v4 @ v3_a.T)  # (alternative way)
 
     v1_a = scipy.linalg.solve_triangular(
         a=L1, b=v3_a, trans="T", lower=True
     )  # \tilde{L}^T \tilde{X} = z_a
-    L1_a += np.tril(-v1_a @ v3.T)
+    # L1_a += np.tril(-v1_a @ v3.T)  # (alternative way)
 
-    # Cholesky adjoint (L1)
-    L1_T_L1_a = L1.T @ L1_a
-    L1_a_lower = np.tril(L1_T_L1_a, k=-1) + 0.5 * np.diag(np.diag(L1_T_L1_a))
-    L1_a_x = scipy.linalg.solve_triangular(a=L1, b=L1_a_lower, trans="T", lower=True)
-    v2_a_T = scipy.linalg.solve_triangular(a=L1, b=L1_a_x.T, trans="T", lower=True)
-    v2_a = v2_a_T.T
-    L1_a = np.zeros_like(L1)
+    # # Cholesky adjoint (L1)  # (alternative way)
+    # L1_T_L1_a = L1.T @ L1_a
+    # L1_a_lower = np.tril(L1_T_L1_a, k=-1) + 0.5 * np.diag(np.diag(L1_T_L1_a))
+    # L1_a_x = scipy.linalg.solve_triangular(a=L1, b=L1_a_lower, trans="T", lower=True)
+    # v2_a_T = scipy.linalg.solve_triangular(a=L1, b=L1_a_x.T, trans="T", lower=True)
+    # v2_a = v2_a_T.T
+    # L1_a = np.zeros_like(L1)
+
+    v2_a = -v1_a @ v5  # (fast way)
 
     v1_a += v2_a @ v0.T
     v0_a = v1.T @ v2_a
@@ -117,8 +119,8 @@ def GLS_cholesky_ad(X, M, y, X_a, M_a, y_a, out_a):
 
 
 def test_cholesky_equal():
-    N = 3
-    K = 3
+    N = 10
+    K = 10
 
     # M = np.eye(N)
     M = np.random.rand(N, N)
@@ -150,6 +152,9 @@ def test_cholesky_equal():
     y_a_c = np.zeros_like(y)
 
     _, X_a_c, M_a_c, y_a_c = GLS_cholesky_ad(X, M, y, X_a_c, M_a_c, y_a_c, out_a)
+
+    # print(X_a)
+    # print(X_a_c)
 
     assert np.allclose(X_a, X_a_c)
     assert np.allclose(M_a, M_a_c)
