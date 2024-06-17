@@ -78,29 +78,37 @@ def GLS_cholesky_ad(X, M, y, X_a, M_a, y_a, out_a):
     v5_a = scipy.linalg.solve_triangular(
         a=L0, b=v6_a, trans="T", lower=True
     )  # L^T Z_a^T = \tilde{Z_a}
-    L0_a = -v5_a @ v6.T
+    L0_a = np.tril(-v5_a @ v6.T)
+
     v4_a = v5_a.T
 
     v3_a = scipy.linalg.solve_triangular(a=L1, b=v4_a, lower=True)  # \tilde{L} z_a = Z_a
-    # L1_a = -v4 @ v3_a.T # not needed?
+    L1_a = np.tril(-v4 @ v3_a.T)
 
     v1_a = scipy.linalg.solve_triangular(
         a=L1, b=v3_a, trans="T", lower=True
     )  # \tilde{L}^T \tilde{X} = z_a
-    # L1_a -= v1_a @ v3.T
+    L1_a += np.tril(-v1_a @ v3.T)
 
-    v2_a = -v1_a @ v5  # (\tilde{L} \tilde{L}^T)_a = -\tilde{X}_a Z^T
+    # Cholesky adjoint (L1)
+    L1_T_L1_a = L1.T @ L1_a
+    L1_a_lower = np.tril(L1_T_L1_a, k=-1) + 0.5 * np.diag(np.diag(L1_T_L1_a))
+    L1_a_x = scipy.linalg.solve_triangular(a=L1, b=L1_a_lower, trans="T", lower=True)
+    v2_a_T = scipy.linalg.solve_triangular(a=L1, b=L1_a_x.T, trans="T", lower=True)
+    v2_a = v2_a_T.T
+    L1_a = np.zeros_like(L1)
 
     v1_a += v2_a @ v0.T
-    # v0_a = v1.T @ v2_a
-    v0_a = v1_a.T  # ? overwritten
+    v0_a = v1.T @ v2_a
+
+    v0_a += v1_a.T
 
     X_a += scipy.linalg.solve_triangular(a=L0, b=v0_a, lower=True)
-    L0_a -= v0 @ X_a.T
+    L0_a += np.tril(-v0 @ X_a.T)
 
-    # Cholesky adjoint
+    # Cholesky adjoint (L0)
     L0_T_L0_a = L0.T @ L0_a
-    L0_a_lower = np.tril(L0_T_L0_a, k=-1) + 0.5 * np.diag(L0_T_L0_a)
+    L0_a_lower = np.tril(L0_T_L0_a, k=-1) + 0.5 * np.diag(np.diag(L0_T_L0_a))
     L0_a_x = scipy.linalg.solve_triangular(a=L0, b=L0_a_lower, trans="T", lower=True)
     M_a_T = scipy.linalg.solve_triangular(a=L0, b=L0_a_x.T, trans="T", lower=True)
     M_a = M_a_T.T
@@ -110,13 +118,15 @@ def GLS_cholesky_ad(X, M, y, X_a, M_a, y_a, out_a):
 
 def test_cholesky_equal():
     N = 3
+    K = 3
 
+    # M = np.eye(N)
     M = np.random.rand(N, N)
     M = 0.5 * (M + M.T) + N * np.eye(N)
     # print(f"det(M) = {np.linalg.det(M)}")
 
     y = np.random.rand(N, 1)
-    X = np.random.rand(N, N)
+    X = np.random.rand(N, K)
 
     # print(f"GLS(X, M, y) = {GLS(X, M, y)}")
     # print(f"GLS_cholesky(X, M, y) = {GLS_cholesky(X, M, y)}")
@@ -130,7 +140,7 @@ def test_cholesky_equal():
     X_a = np.zeros_like(X)
     M_a = np.zeros_like(M)
     y_a = np.zeros_like(y)
-    out_a = np.zeros((N, 1))
+    out_a = np.zeros((K, 1))
     out_a[0, 0] = 1.0  # seed
 
     _, X_a, M_a, y_a = GLS_ad(X, M, y, X_a, M_a, y_a, out_a)
